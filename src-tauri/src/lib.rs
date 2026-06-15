@@ -19,6 +19,20 @@ fn svn_cmd() -> Command {
     Command::new(find_svn())
 }
 
+/// 对 SVN URL 的 path 部分进行百分号编码，支持中文等非 ASCII 字符
+fn encode_svn_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    match url::Url::parse(trimmed) {
+        Ok(mut parsed) => {
+            // path() 返回已解码的路径，set_path() 会重新百分号编码
+            let path = parsed.path().to_string();
+            parsed.set_path(&path);
+            parsed.as_str().to_string()
+        }
+        Err(_) => trimmed.to_string(),
+    }
+}
+
 #[derive(serde::Serialize)]
 pub struct SvnEntry {
     name: String,
@@ -97,6 +111,7 @@ fn add_svn_auth(cmd: &mut std::process::Command, username: &Option<String>, pass
 	/// 远程列出 SVN 目录
 #[tauri::command]
 fn svn_ls(url: String, username: Option<String>, password: Option<String>) -> Result<Vec<SvnEntry>, String> {
+    let url = encode_svn_url(&url);
     let mut cmd = svn_cmd();
     cmd.args(["ls", "--xml", &url]);
     add_svn_auth(&mut cmd, &username, &password);
@@ -123,6 +138,7 @@ fn do_replace(
 ) -> Result<ReplaceResult, String> {
     // Validate source exists
     let src_path = PathBuf::from(&source);
+    let target_url = encode_svn_url(&target_url);
     if !src_path.exists() {
         return Err(format!("Source not found: {}", source));
     }
@@ -218,6 +234,7 @@ fn do_replace(
 /// 测试 SVN 连接
 #[tauri::command]
 fn test_connection(url: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
+    let url = encode_svn_url(&url);
     let mut cmd = svn_cmd();
     cmd.args(["ls", "--depth", "0", &url]);
     add_svn_auth(&mut cmd, &username, &password);
