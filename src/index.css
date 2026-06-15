@@ -40,6 +40,15 @@ body {
   color: var(--text);
   transition: background 0.2s, color 0.2s;
   -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+select,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .app {
@@ -60,9 +69,7 @@ body {
   border-bottom: 1px solid var(--border);
   user-select: none;
   flex-shrink: 0;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  background: var(--bg);
   position: relative;
   z-index: 1;
 }
@@ -83,20 +90,10 @@ body {
   min-width: 68px;
 }
 
-.settings-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  cursor: pointer;
-  color: var(--text);
-  transition: all 0.15s;
-  display: inline-flex;
+.header-left {
+  display: flex;
   align-items: center;
-}
-
-.settings-btn:hover {
-  background: var(--surface);
+  gap: 6px;
 }
 
 /* Layout: left tree + right panel */
@@ -104,6 +101,7 @@ body {
   display: flex;
   flex: 1;
   overflow: hidden;
+  position: relative;
 }
 
 .panel-left {
@@ -125,6 +123,7 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--bg);
 }
 
 .panel-right .main {
@@ -143,11 +142,62 @@ body {
   padding: 8px 12px;
 }
 
-.btn-icon {
-  padding: 6px 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.text-primary { color: var(--primary); }
+
+/* Tree search */
+.tree-search {
+  position: relative;
+  padding: 4px 12px 6px;
+  flex-shrink: 0;
+}
+
+.tree-search-icon {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.tree-search input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 8px 5px 24px;
+  font-size: 11px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: var(--font);
+}
+
+.tree-search input:focus {
+  border-color: var(--primary);
+}
+
+/* Tree filter */
+.tree-filter {
+  padding: 4px 12px 8px;
+  flex-shrink: 0;
+}
+
+.tree-filter input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: var(--font);
+}
+
+.tree-filter input:focus {
+  border-color: var(--primary);
 }
 
 /* Tree */
@@ -267,6 +317,8 @@ body {
   font-size: 12px;
   word-break: break-all;
   line-height: 1.4;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .target-placeholder {
@@ -294,6 +346,21 @@ body {
 
 .btn:hover {
   background: var(--border);
+}
+
+.btn-icon {
+  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  color: var(--text);
 }
 
 .btn-primary {
@@ -355,12 +422,13 @@ body {
 
 /* Splitter */
 .splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
   width: 6px;
-  flex-shrink: 0;
   cursor: col-resize;
   background: transparent;
   transition: background 0.15s;
-  position: relative;
   z-index: 2;
   display: flex;
   align-items: center;

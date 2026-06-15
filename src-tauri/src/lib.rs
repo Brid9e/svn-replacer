@@ -8,6 +8,7 @@ use tauri::Manager;
 pub struct SvnEntry {
     name: String,
     kind: String, // "dir" | "file"
+    date: String,
 }
 
 #[derive(serde::Serialize)]
@@ -21,6 +22,7 @@ fn parse_svn_ls_xml(xml: &str) -> Vec<SvnEntry> {
     let mut in_entry = false;
     let mut name = String::new();
     let mut kind = String::new();
+    let mut date = String::new();
 
     for line in xml.lines() {
         let t = line.trim();
@@ -28,6 +30,7 @@ fn parse_svn_ls_xml(xml: &str) -> Vec<SvnEntry> {
             in_entry = true;
             name.clear();
             kind.clear();
+            date.clear();
             // try to extract kind from same line as <entry
             if let Some(s) = t.find("kind=\"") {
                 let rest = &t[s + 6..];
@@ -52,9 +55,14 @@ fn parse_svn_ls_xml(xml: &str) -> Vec<SvnEntry> {
                     .trim_end_matches('/')
                     .to_string();
             }
+            if t.starts_with("<date>") {
+                date = t.trim_start_matches("<date>")
+                    .trim_end_matches("</date>")
+                    .to_string();
+            }
         }
         if t == "</entry>" && !name.is_empty() {
-            entries.push(SvnEntry { name: name.clone(), kind: kind.clone() });
+            entries.push(SvnEntry { name: name.clone(), kind: kind.clone(), date: date.clone() });
             in_entry = false;
         }
     }

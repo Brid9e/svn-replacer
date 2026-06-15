@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Folder, File, ChevronRight, ChevronDown, Loader2, Settings, Sun, Moon, RefreshCw, ArrowLeft } from "lucide-react";
+import { Folder, File, ChevronRight, ChevronDown, Loader2, Settings, Sun, Moon, RefreshCw, ArrowLeft, Filter, ArrowUpDown, Search } from "lucide-react";
 import "./index.css";
+
+const appWindow = getCurrentWindow();
 
 interface SvnEntry {
   name: string;
   kind: string;
+  date: string;
 }
 
 interface ReplaceResult {
@@ -19,6 +22,7 @@ interface TreeNode {
   name: string;
   fullUrl: string;
   kind: string;
+  date: string;
   children: TreeNode[];
   expanded: boolean;
   loaded: boolean;
@@ -29,11 +33,19 @@ function TreeItem({
   depth,
   onSelect,
   selectedUrl,
+  isFiltered,
+  sortEntries,
+  searchText,
+  matchesSearch,
 }: {
   node: TreeNode;
   depth: number;
   onSelect: (url: string, name: string) => void;
   selectedUrl: string | null;
+  isFiltered: (name: string, kind: string) => boolean;
+  sortEntries: (entries: TreeNode[]) => TreeNode[];
+  searchText: string;
+  matchesSearch: (node: TreeNode, text: string) => boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [, forceUpdate] = useState(0);
@@ -56,6 +68,7 @@ function TreeItem({
             name: e.name,
             fullUrl: `${node.fullUrl.replace(/\/?$/, "/")}${e.name}`,
             kind: e.kind,
+            date: e.date,
             children: [],
             expanded: false,
             loaded: false,
@@ -92,13 +105,20 @@ function TreeItem({
         <span className="tree-name">{node.name}</span>
       </div>
       {node.expanded &&
-        node.children.map((child) => (
+        sortEntries(node.children)
+          .filter((c) => !isFiltered(c.name, c.kind))
+          .filter((c) => matchesSearch(c, searchText))
+          .map((child) => (
           <TreeItem
             key={child.fullUrl}
             node={child}
             depth={depth + 1}
             onSelect={onSelect}
             selectedUrl={selectedUrl}
+            isFiltered={isFiltered}
+            sortEntries={sortEntries}
+            searchText={searchText}
+            matchesSearch={matchesSearch}
           />
         ))}
     </div>
@@ -124,6 +144,39 @@ function App() {
   const [treeLoading, setTreeLoading] = useState(false);
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [filterExt, setFilterExt] = useState(() => (localStorage.getItem("filterExt") || ""));
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sortByDate, setSortByDate] = useState(() => localStorage.getItem("sortByDate") === "true");
+
+  // Sort helper: newest first
+  const sortEntries = useCallback((entries: TreeNode[]) => {
+    if (!sortByDate) return entries;
+    return [...entries].sort((a, b) => {
+      if (a.date < b.date) return 1;
+      if (a.date > b.date) return -1;
+      return 0;
+    });
+  }, [sortByDate]);
+
+  // Filter helper: returns true if a file-type node should be hidden
+  const isFiltered = useCallback((name: string, kind: string) => {
+    if (kind === "dir" || !filterExt.trim()) return false;
+    const exts = filterExt.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+    if (exts.length === 0) return false;
+    const lower = name.toLowerCase();
+    return exts.some((e) => lower.endsWith(e));
+  }, [filterExt]);
+
+  // Search
+  const [searchText, setSearchText] = useState("");
+
+  // Returns true if the node or any descendant matches the search text
+  const matchesSearch = useCallback((node: TreeNode, text: string): boolean => {
+    if (!text.trim()) return true;
+    const lower = text.toLowerCase();
+    if (node.name.toLowerCase().includes(lower)) return true;
+    return node.children.some((c) => matchesSearch(c, text));
+  }, []);
 
   // Replace
   const [sourcePath, setSourcePath] = useState("");
@@ -134,6 +187,10 @@ function App() {
   // Drag-drop
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
+
+  // Drag refs
+  const headerRef = useRef<HTMLElement>(null);
+  const dragRegionRef = useRef<HTMLDivElement>(null);
 
   // Splitter
   const [leftWidth, setLeftWidth] = useState(280);
@@ -149,6 +206,16 @@ function App() {
   useEffect(() => {
     localStorage.setItem("baseUrl", baseUrl.trim());
   }, [baseUrl]);
+
+  // Persist filter extension
+  useEffect(() => {
+    localStorage.setItem("filterExt", filterExt);
+  }, [filterExt]);
+
+  // Persist sort preference
+  useEffect(() => {
+    localStorage.setItem("sortByDate", String(sortByDate));
+  }, [sortByDate]);
 
   // Restore cached tree on mount
   useEffect(() => {
@@ -198,6 +265,25 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Manual window drag (replaces data-tauri-drag-region)
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.buttons === 1) {
+        e.detail === 2
+          ? appWindow.toggleMaximize()
+          : appWindow.startDragging();
+      }
+    };
+    const header = headerRef.current;
+    const dragRegion = dragRegionRef.current;
+    header?.addEventListener("mousedown", onMouseDown);
+    dragRegion?.addEventListener("mousedown", onMouseDown);
+    return () => {
+      header?.removeEventListener("mousedown", onMouseDown);
+      dragRegion?.removeEventListener("mousedown", onMouseDown);
+    };
+  }, []);
+
   const loadTree = useCallback(async () => {
     if (!baseUrl.trim()) return;
     setTreeLoading(true);
@@ -211,12 +297,14 @@ function App() {
         name: baseUrl.split("/").filter(Boolean).pop() || "root",
         fullUrl: url,
         kind: "dir",
+        date: "",
         children: entries
           .filter((e) => e.name)
           .map((e) => ({
             name: e.name,
             fullUrl: `${url}${e.name}`,
             kind: e.kind,
+            date: e.date,
             children: [],
             expanded: false,
             loaded: false,
@@ -302,17 +390,44 @@ function App() {
       <div className="layout">
         {/* Left: Tree (full height) */}
         <div className="panel-left" style={{ width: leftWidth }}>
-          <div className="panel-drag" data-tauri-drag-region />
+          <div className="panel-drag" ref={dragRegionRef} />
           <div className="tree-toolbar">
             <button className="btn" onClick={loadTree} disabled={treeLoading || !baseUrl} style={{ flex: 1 }}>
               {treeLoading ? <span className="spinner" /> : "Load Tree"}
             </button>
+            {treeRoot && (
+              <button className="btn btn-icon" onClick={() => setSortByDate((v) => !v)} title={sortByDate ? "按名称排序" : "按日期排序"}>
+                <ArrowUpDown size={14} className={sortByDate ? "text-primary" : ""} />
+              </button>
+            )}
+            {treeRoot && (
+              <button className="btn btn-icon" onClick={() => setFilterOpen((v) => !v)} title="筛选">
+                <Filter size={14} className={filterOpen ? "text-primary" : ""} />
+              </button>
+            )}
             {treeRoot && (
               <button className="btn btn-icon" onClick={loadTree} disabled={treeLoading} title="刷新">
                 <RefreshCw size={14} className={treeLoading ? "spin" : ""} />
               </button>
             )}
           </div>
+          <div className="tree-search">
+            <Search size={12} className="tree-search-icon" />
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="搜索..."
+            />
+          </div>
+          {filterOpen && (
+            <div className="tree-filter">
+              <input
+                value={filterExt}
+                onChange={(e) => setFilterExt(e.target.value)}
+                placeholder="扩展名, 逗号隔开, 如: .jar,.class"
+              />
+            </div>
+          )}
           <div className="tree-container">
             {!baseUrl ? (
               <div className="tree-empty">请在设置中配置 SVN 地址</div>
@@ -322,6 +437,10 @@ function App() {
                 depth={0}
                 onSelect={onSelect}
                 selectedUrl={selectedUrl}
+                isFiltered={isFiltered}
+                sortEntries={sortEntries}
+                searchText={searchText}
+                matchesSearch={matchesSearch}
               />
             ) : (
               <div className="tree-empty">点击 Load Tree</div>
@@ -329,19 +448,19 @@ function App() {
           </div>
         </div>
 
-        {/* Splitter */}
-        <div className="splitter" onMouseDown={onSplitterDown} />
-
         {/* Right side: header + content */}
         <div className="panel-right">
-          <header className="header" data-tauri-drag-region>
-            <div className="header-actions">
-              {view === "settings" ? (
-                <button className="settings-btn" onClick={() => setView("replace")} title="返回">
+          <header className="header" ref={headerRef}>
+            <div className="header-left">
+              {view === "settings" && (
+                <button className="btn-icon" onClick={() => setView("replace")} title="返回">
                   <ArrowLeft size={16} />
                 </button>
-              ) : (
-                <button className="settings-btn" onClick={() => setView("settings")} title="设置">
+              )}
+            </div>
+            <div className="header-actions">
+              {view !== "settings" && (
+                <button className="btn-icon" onClick={() => setView("settings")} title="设置">
                   <Settings size={16} />
                 </button>
               )}
@@ -430,6 +549,9 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Splitter overlay */}
+        <div className="splitter" style={{ left: leftWidth - 3 }} onMouseDown={onSplitterDown} />
       </div>
     </div>
   );
