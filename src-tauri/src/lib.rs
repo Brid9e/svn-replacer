@@ -4,6 +4,21 @@ use std::fs;
 use tempfile::tempdir;
 use tauri::Manager;
 
+fn find_svn() -> String {
+    let candidates = ["/opt/homebrew/bin/svn", "/usr/local/bin/svn", "/usr/bin/svn"];
+    for p in &candidates {
+        if std::path::Path::new(p).exists() {
+            return p.to_string();
+        }
+    }
+    // fallback: hope it's in PATH
+    "svn".to_string()
+}
+
+fn svn_cmd() -> Command {
+    Command::new(find_svn())
+}
+
 #[derive(serde::Serialize)]
 pub struct SvnEntry {
     name: String,
@@ -82,7 +97,7 @@ fn add_svn_auth(cmd: &mut std::process::Command, username: &Option<String>, pass
 	/// 远程列出 SVN 目录
 #[tauri::command]
 fn svn_ls(url: String, username: Option<String>, password: Option<String>) -> Result<Vec<SvnEntry>, String> {
-    let mut cmd = Command::new("svn");
+    let mut cmd = svn_cmd();
     cmd.args(["ls", "--xml", &url]);
     add_svn_auth(&mut cmd, &username, &password);
     let output = cmd.output()
@@ -117,7 +132,7 @@ fn do_replace(
     let work_dir = tmp.path().join("svn-work");
 
     // Checkout with empty depth (just the skeleton)
-    let mut co_cmd = Command::new("svn");
+    let mut co_cmd = svn_cmd();
     co_cmd.args(["checkout", "--depth", "empty", &target_url]).arg(&work_dir);
     add_svn_auth(&mut co_cmd, &username, &password);
     let checkout = co_cmd.output()
@@ -134,7 +149,7 @@ fn do_replace(
 
     // svn delete the existing target (if any)
     if target_path.exists() {
-        let mut del_cmd = Command::new("svn");
+        let mut del_cmd = svn_cmd();
         del_cmd.args(["delete", "--force"]).arg(&target_path);
         add_svn_auth(&mut del_cmd, &username, &password);
         let del = del_cmd.output()
@@ -169,7 +184,7 @@ fn do_replace(
     }
 
     // svn add (--force to handle recursive adds)
-    let mut add_cmd = Command::new("svn");
+    let mut add_cmd = svn_cmd();
     add_cmd.args(["add", "--parents", "--force"]).arg(&target_path);
     add_svn_auth(&mut add_cmd, &username, &password);
     let add = add_cmd.output()
@@ -181,7 +196,7 @@ fn do_replace(
     }
 
     // svn commit
-    let mut ci_cmd = Command::new("svn");
+    let mut ci_cmd = svn_cmd();
     ci_cmd.args(["commit", "-m"]).arg(&commit_msg).arg(&work_dir);
     add_svn_auth(&mut ci_cmd, &username, &password);
     let commit = ci_cmd.output()
@@ -203,7 +218,7 @@ fn do_replace(
 /// 测试 SVN 连接
 #[tauri::command]
 fn test_connection(url: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
-    let mut cmd = Command::new("svn");
+    let mut cmd = svn_cmd();
     cmd.args(["ls", "--depth", "0", &url]);
     add_svn_auth(&mut cmd, &username, &password);
     let output = cmd.output()
