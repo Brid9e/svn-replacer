@@ -137,7 +137,10 @@ function App() {
   const [view, setView] = useState<"replace" | "settings">("replace");
 
   // Base URL (stored in localStorage)
-  const [baseUrl, setBaseUrl] = useState(() => (localStorage.getItem("baseUrl") || "").trim());
+  const [baseUrl, setBaseUrl] = useState(() => {
+    const saved = (localStorage.getItem("baseUrl") || "").trim();
+    try { return decodeURI(saved); } catch { return saved; }
+  });
 
   // Tree
   const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null);
@@ -542,7 +545,11 @@ function App() {
                 <label>SVN 地址</label>
                 <input
                   value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
+                  onChange={(e) => {
+                    // 自动解码百分号编码的 URL
+                    const decoded = (() => { try { return decodeURI(e.target.value); } catch { return e.target.value; } })();
+                    setBaseUrl(decoded);
+                  }}
                   placeholder="https://svn.example.com/svn/project/"
                 />
               </div>
