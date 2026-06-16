@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Folder, File, ChevronRight, ChevronDown, Loader2, Settings, Sun, Moon, RefreshCw, ArrowLeft, Filter, ArrowUpDown, Search } from "lucide-react";
+import { Folder, File, ChevronRight, ChevronDown, Loader2, Settings, Sun, Moon, RefreshCw, ArrowLeft, Filter, ArrowUpDown, Search, History } from "lucide-react";
 import "./index.css";
 
 const appWindow = getCurrentWindow();
@@ -15,6 +15,13 @@ interface SvnEntry {
 
 interface ReplaceResult {
   success: boolean;
+  message: string;
+}
+
+interface SvnLogEntry {
+  revision: string;
+  author: string;
+  date: string;
   message: string;
 }
 
@@ -365,6 +372,30 @@ function App() {
     }
   }, [selectedUrl, sourcePath, commitMsg]);
 
+  // Log
+  const [logEntries, setLogEntries] = useState<SvnLogEntry[] | null>(null);
+  const [loadingLog, setLoadingLog] = useState(false);
+
+  const doLog = useCallback(async () => {
+    if (!selectedUrl) return;
+    setLoadingLog(true);
+    setLogEntries(null);
+    try {
+      const entries: SvnLogEntry[] = await invoke("svn_log", { url: selectedUrl, limit: 50 });
+      setLogEntries(entries);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput({ type: "error", text: `Log failed: ${msg}` });
+    } finally {
+      setLoadingLog(false);
+    }
+  }, [selectedUrl]);
+
+  // Format date for display
+  const fmtDate = (d: string) => {
+    try { return new Date(d).toLocaleString(); } catch { return d; }
+  };
+
   // Splitter mouse handlers
   const onSplitterDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -455,14 +486,14 @@ function App() {
         <div className="panel-right">
           <header className="header" ref={headerRef}>
             <div className="header-left">
-              {view === "settings" && (
-                <button className="btn-icon" onClick={() => setView("replace")} title="返回">
+              {(view === "settings" || logEntries) && (
+                <button className="btn-icon" onClick={() => { if (logEntries) setLogEntries(null); else setView("replace"); }} title="返回">
                   <ArrowLeft size={16} />
                 </button>
               )}
             </div>
             <div className="header-actions">
-              {view !== "settings" && (
+              {view !== "settings" && !logEntries && (
                 <button className="btn-icon" onClick={() => setView("settings")} title="设置">
                   <Settings size={16} />
                 </button>
@@ -470,7 +501,34 @@ function App() {
             </div>
           </header>
 
-          {view === "replace" ? (
+          {view === "replace" && logEntries ? (
+            <div className="main log-view">
+              <div className="field">
+                <label>History</label>
+                <div className="target-display">
+                  <span className="target-path">{selectedUrl}</span>
+                </div>
+              </div>
+              {logEntries.length === 0 ? (
+                <div className="log-empty">暂无提交记录</div>
+              ) : (
+                <div className="log-list">
+                  {logEntries.map((entry, i) => (
+                    <div key={i} className="log-item">
+                      <div className="log-revision">r{entry.revision}</div>
+                      <div className="log-body">
+                        <div className="log-meta">
+                          <span className="log-author">{entry.author}</span>
+                          <span className="log-date">{fmtDate(entry.date)}</span>
+                        </div>
+                        <div className="log-msg">{entry.message || <span className="log-empty-msg">(no message)</span>}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : view === "replace" ? (
             <div className="main">
               <div className="field">
                 <label>Target</label>
@@ -481,6 +539,11 @@ function App() {
                     <span className="target-placeholder">在左侧树中选择目标目录</span>
                   )}
                 </div>
+                {selectedName && (
+                  <button className="btn btn-icon" onClick={doLog} title="查看提交历史" style={{ alignSelf: "flex-end" }}>
+                    {loadingLog ? <Loader2 size={14} className="spin" /> : <History size={14} />} Log
+                  </button>
+                )}
               </div>
 
               <div className="field">

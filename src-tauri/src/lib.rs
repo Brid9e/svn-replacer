@@ -231,6 +231,93 @@ fn do_replace(
     })
 }
 
+#[derive(serde::Serialize)]
+pub struct SvnLogEntry {
+    revision: String,
+    author: String,
+    date: String,
+    message: String,
+}
+
+fn parse_svn_log_xml(xml: &str) -> Vec<SvnLogEntry> {
+    let mut entries = Vec::new();
+    let mut in_entry = false;
+    let mut revision = String::new();
+    let mut author = String::new();
+    let mut date = String::new();
+    let mut message = String::new();
+
+    for line in xml.lines() {
+        let t = line.trim();
+        if let Some(s) = t.find("<logentry") {
+            in_entry = true;
+            revision.clear();
+            author.clear();
+            date.clear();
+            message.clear();
+            // extract revision from attribute
+            if let Some(ri) = t.find("revision=\"") {
+                let rest = &t[ri + 10..];
+                if let Some(e) = rest.find('"') {
+                    revision = rest[..e].to_string();
+                }
+            }
+        }
+        if in_entry {
+            if t.starts_with("<author>") {
+                author = t.trim_start_matches("<author>").trim_end_matches("</author>").to_string();
+            }
+            if t.starts_with("<date>") {
+                date = t.trim_start_matches("<date>").trim_end_matches("</date>").to_string();
+            }
+            if t.starts_with("<msg") {
+                // message may span multiple lines
+                let start = t.find('>').map(|i| i + 1).unwrap_or(0);
+                if t.ends_with("</msg>") {
+                    message = t[start..].trim_end_matches("</msg>").to_string();
+                } else {
+                    message = t[start..].to_string();
+                }
+            } else if !message.is_empty() && !t.starts_with("</logentry") && !t.starts_with("<logentry") {
+                // continuation of multi-line message
+                if t.ends_with("</msg>") {
+                    message.push('\n');
+                    message.push_str(&t[..t.len() - 6]);
+                    in_entry = false;
+                } else {
+                    message.push('\n');
+                    message.push_str(t);
+                }
+            }
+        }
+        if t == "</logentry>" && in_entry {
+            entries.push(SvnLogEntry { revision: revision.clone(), author: author.clone(), date: date.clone(), message: message.trim().to_string() });
+            in_entry = false;
+        }
+    }
+    entries
+}
+
+/// 获取提交历史
+#[tauri::command]
+fn svn_log(url: String, limit: Option<u32>, username: Option<String>, password: Option<String>) -> Result<Vec<SvnLogEntry>, String> {
+    let url = encode_svn_url(&url);
+    let mut cmd = svn_cmd();
+    let limit = limit.unwrap_or(50).to_string();
+    cmd.args(["log", "--xml", "--limit", &limit, &url]);
+    add_svn_auth(&mut cmd, &username, &password);
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to execute svn log: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("svn log failed: {}", stderr));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_svn_log_xml(&xml))
+}
+
 /// 测试 SVN 连接
 #[tauri::command]
 fn test_connection(url: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
@@ -261,7 +348,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![svn_ls, do_replace, test_connection])
+        .invoke_handler(tauri::generate_handler![svn_ls, do_replace, test_connection, svn_log])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
