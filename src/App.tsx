@@ -140,8 +140,8 @@ function App() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
 
-  // View: "replace" | "settings"
-  const [view, setView] = useState<"replace" | "settings">("replace");
+  // View: "replace" | "settings" | "log"
+  const [view, setView] = useState<"replace" | "settings" | "log">("replace");
 
   // Base URL (stored in localStorage)
   const [baseUrl, setBaseUrl] = useState(() => {
@@ -378,6 +378,7 @@ function App() {
 
   const doLog = useCallback(async () => {
     if (!selectedUrl) return;
+    setView("log");
     setLoadingLog(true);
     setLogEntries(null);
     try {
@@ -486,14 +487,14 @@ function App() {
         <div className="panel-right">
           <header className="header" ref={headerRef}>
             <div className="header-left">
-              {(view === "settings" || logEntries) && (
-                <button className="btn-icon" onClick={() => { if (logEntries) setLogEntries(null); else setView("replace"); }} title="返回">
+              {view !== "replace" && (
+                <button className="btn-icon" onClick={() => setView("replace")} title="返回">
                   <ArrowLeft size={16} />
                 </button>
               )}
             </div>
             <div className="header-actions">
-              {view !== "settings" && !logEntries && (
+              {view === "replace" && (
                 <button className="btn-icon" onClick={() => setView("settings")} title="设置">
                   <Settings size={16} />
                 </button>
@@ -501,7 +502,7 @@ function App() {
             </div>
           </header>
 
-          {view === "replace" && logEntries ? (
+          {view === "log" ? (
             <div className="main log-view">
               <div className="field">
                 <label>History</label>
@@ -509,7 +510,11 @@ function App() {
                   <span className="target-path">{selectedUrl}</span>
                 </div>
               </div>
-              {logEntries.length === 0 ? (
+              {loadingLog ? (
+                <div style={{ textAlign: "center", padding: 24 }}><span className="spinner" /></div>
+              ) : logEntries === null ? (
+                <div className="log-empty">请选择目标后查看</div>
+              ) : logEntries.length === 0 ? (
                 <div className="log-empty">暂无提交记录</div>
               ) : (
                 <div className="log-list">
