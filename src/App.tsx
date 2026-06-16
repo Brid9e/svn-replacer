@@ -376,13 +376,11 @@ function App() {
   const [logEntries, setLogEntries] = useState<SvnLogEntry[] | null>(null);
   const [loadingLog, setLoadingLog] = useState(false);
 
-  const doLog = useCallback(async () => {
-    if (!selectedUrl) return;
-    setView("log");
+  const loadLog = useCallback(async (url: string) => {
     setLoadingLog(true);
     setLogEntries(null);
     try {
-      const entries: SvnLogEntry[] = await invoke("svn_log", { url: selectedUrl, limit: 50 });
+      const entries: SvnLogEntry[] = await invoke("svn_log", { url, limit: 50 });
       setLogEntries(entries);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -390,7 +388,17 @@ function App() {
     } finally {
       setLoadingLog(false);
     }
+  }, []);
+
+  const doLog = useCallback(() => {
+    if (!selectedUrl) return;
+    setView("log");
   }, [selectedUrl]);
+
+  // Load/auto-reload log when entering log view or switching tree node
+  useEffect(() => {
+    if (view === "log" && selectedUrl) loadLog(selectedUrl);
+  }, [view, selectedUrl, loadLog]);
 
   // Format date for display
   const fmtDate = (d: string) => {
