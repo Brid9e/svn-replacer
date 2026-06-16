@@ -106,7 +106,7 @@ function TreeItem({
               : node.expanded
                 ? <ChevronDown size={12} />
                 : <ChevronRight size={12} />
-            : <span style={{ width: 12, display: "inline-block" }} />}
+            : null}
         </span>
         <span className="tree-kind">{node.kind === "dir" ? <Folder size={14} /> : <File size={14} />}</span>
         <span className="tree-name">{node.name}</span>
@@ -525,17 +525,14 @@ function App() {
               ) : logEntries.length === 0 ? (
                 <div className="log-empty">暂无提交记录</div>
               ) : (
-                <div className="log-list">
+                <div className="timeline-container">
                   {logEntries.map((entry, i) => (
-                    <div key={i} className="log-item">
-                      <div className="log-revision">r{entry.revision}</div>
-                      <div className="log-body">
-                        <div className="log-meta">
-                          <span className="log-author">{entry.author}</span>
-                          <span className="log-date">{fmtDate(entry.date)}</span>
-                        </div>
-                        <div className="log-msg">{entry.message || <span className="log-empty-msg">(no message)</span>}</div>
+                    <div key={i} className="timeline-item">
+                      <div className="timeline-item-meta">
+                        <span className="timeline-item-author">{entry.author}</span>
+                        <span>{fmtDate(entry.date)}</span>
                       </div>
+                      <div className="timeline-item-msg">{entry.message || <span className="log-empty-msg">(no message)</span>}</div>
                     </div>
                   ))}
                 </div>
