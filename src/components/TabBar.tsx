@@ -1,8 +1,9 @@
-import { LayoutList, History, GitCommitHorizontal, Code2 } from "lucide-react";
+import { LayoutList, History, GitCommitHorizontal, Code2, ArrowUpToLine } from "lucide-react";
 
 const TABS = [
   { id: "status", label: "Status", icon: LayoutList },
   { id: "log", label: "Log", icon: History },
+  { id: "replace", label: "Replace", icon: ArrowUpToLine },
   { id: "commit", label: "Commit", icon: GitCommitHorizontal },
   { id: "diff", label: "Diff", icon: Code2 },
 ] as const;

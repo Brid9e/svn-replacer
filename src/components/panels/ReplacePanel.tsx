@@ -1,50 +1,63 @@
-import { Folder } from "lucide-react";
-import type { Workspace } from "../../types";
+import { useState } from "react";
+import { Folder, ArrowUpToLine } from "lucide-react";
 
-export function CommitPanel({
-  workspace,
-  committing,
-  onCommit,
+export function ReplacePanel({
+  selectedUrl,
+  replacing,
+  onReplace,
   onPickSource,
-  onSetWsField,
 }: {
-  workspace: Workspace | undefined;
-  committing: boolean;
-  onCommit: () => void;
-  onPickSource: () => void;
-  onSetWsField: <K extends keyof Workspace>(field: K, value: Workspace[K]) => void;
+  selectedUrl: string | null;
+  replacing: boolean;
+  onReplace: (source: string, targetUrl: string, commitMsg: string) => void;
+  onPickSource: () => Promise<string | null>;
 }) {
+  const [sourcePath, setSourcePath] = useState("");
+  const [commitMsg, setCommitMsg] = useState("");
+
+  const handlePickSource = async () => {
+    const path = await onPickSource();
+    if (path) setSourcePath(path);
+  };
+
+  const targetUrl = selectedUrl || "";
+
   return (
     <div className="main">
       <div className="field">
-        <label>Working Copy</label>
+        <label>Source（本地文件或目录）</label>
         <div className="file-input-row">
           <input
-            value={workspace?.sourcePath || ""}
-            onChange={(e) => onSetWsField("sourcePath", e.target.value)}
-            placeholder="选择 SVN 工作副本目录"
+            value={sourcePath}
+            onChange={(e) => setSourcePath(e.target.value)}
+            placeholder="选择或输入本地路径"
           />
-          <button className="btn" onClick={onPickSource}>
+          <button className="btn" onClick={handlePickSource}>
             <Folder size={14} /> Browse
           </button>
         </div>
       </div>
 
       <div className="field">
+        <label>Target URL</label>
+        <div className={`target-display${!targetUrl ? " target-placeholder" : ""}`}>{targetUrl || "请在左侧树中选择目标"}</div>
+      </div>
+
+      <div className="field">
         <label>Commit Message</label>
         <input
-          value={workspace?.commitMsg || ""}
-          onChange={(e) => onSetWsField("commitMsg", e.target.value)}
+          value={commitMsg}
+          onChange={(e) => setCommitMsg(e.target.value)}
           placeholder="输入提交信息"
         />
       </div>
 
       <button
         className="btn btn-primary"
-        onClick={onCommit}
-        disabled={committing || !workspace?.sourcePath?.trim() || !workspace?.commitMsg?.trim()}
+        onClick={() => onReplace(sourcePath, targetUrl, commitMsg)}
+        disabled={replacing || !sourcePath.trim() || !targetUrl.trim() || !commitMsg.trim()}
       >
-        {committing ? <span className="spinner" /> : "Commit"}
+        {replacing ? <span className="spinner" /> : <><ArrowUpToLine size={14} /> Replace & Commit</>}
       </button>
     </div>
   );

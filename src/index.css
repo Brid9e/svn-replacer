@@ -388,6 +388,10 @@ textarea {
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 
 .btn:hover {
@@ -866,6 +870,14 @@ textarea {
 }
 
 .btn-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-small {
   padding: 4px 10px;
   font-size: 11px;
   display: inline-flex;

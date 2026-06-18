@@ -142,8 +142,16 @@ export function TreePanel({
 
       {ctxMenu && createPortal(
         <div ref={ctxRef} className="ctx-menu" style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999 }}>
+          {ctxMenu.kind === "dir" && (
+            <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("mkdir", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+              新建文件夹
+            </div>
+          )}
           <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("copy-url", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
             复制 URL
+          </div>
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("rename", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            重命名
           </div>
           <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("view-log", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
             查看提交历史

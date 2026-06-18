@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RefreshCw, Download, FilePlus, Trash2, RotateCcw, Wrench, ArrowDownToLine, Settings } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useWorkspaces } from "./hooks/useWorkspaces";
 import { useSvnCommands } from "./hooks/useSvnCommands";
 import { useTree } from "./hooks/useTree";
@@ -12,7 +13,8 @@ import { Toolbar } from "./components/Toolbar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import type { TerminalMessage } from "./components/TerminalPanel";
 import { LogPanel } from "./components/panels/LogPanel";
-import { CommitPanel } from "./components/panels/ReplacePanel";
+import { CommitPanel } from "./components/panels/CommitPanel";
+import { ReplacePanel } from "./components/panels/ReplacePanel";
 import { StatusPanel } from "./components/panels/StatusPanel";
 import { DiffPanel } from "./components/panels/DiffPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
@@ -39,14 +41,14 @@ function App() {
   }, [theme]);
 
   // Tab-based navigation
-  const [activeTab, setActiveTab] = useState<"status" | "log" | "commit" | "diff">("commit");
+  const [activeTab, setActiveTab] = useState<"status" | "log" | "replace" | "commit" | "diff">("commit");
   const [overlay, setOverlay] = useState<"settings" | "workspace" | null>(null);
   const [editWsId, setEditWsId] = useState<string | null>(null);
   const [wsForm, setWsForm] = useState({ name: "", baseUrl: "", username: "", password: "" });
 
   // Hooks
   const { workspaces, activeId, activeWorkspace, setWorkspaces, setActiveId, setWsField } = useWorkspaces();
-  const { svnLs, svnLog, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, readLocalDir } = useSvnCommands(workspaces, activeId);
+  const { svnLs, svnLog, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, svnRename, svnMkdir, readLocalDir, doReplace } = useSvnCommands(workspaces, activeId);
   const {
     treeRoot, treeLoading, selectedUrl, selectedName,
     filterOpen, searchText, setSearchText, setFilterOpen,
@@ -63,10 +65,19 @@ function App() {
   // Update
   const [updating, setUpdating] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [replacing, setReplacing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  // Rename dialog
+  const [renameDialog, setRenameDialog] = useState<{ url: string; name: string } | null>(null);
+  const [renameNewName, setRenameNewName] = useState("");
+  const [renameMsg, setRenameMsg] = useState("");
+  // Mkdir dialog
+  const [mkdirParentUrl, setMkdirParentUrl] = useState<string | null>(null);
+  const [mkdirName, setMkdirName] = useState("");
+  const [mkdirMsg, setMkdirMsg] = useState("");
   // Diff
   const [diffContent, setDiffContent] = useState<string | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
@@ -220,6 +231,16 @@ function App() {
           });
         }
         break;
+      case "rename":
+        setRenameDialog({ url, name });
+        setRenameNewName(name);
+        setRenameMsg("");
+        break;
+      case "mkdir":
+        setMkdirParentUrl(url);
+        setMkdirName("");
+        setMkdirMsg("");
+        break;
     }
   }, [setSelectedUrl, setSelectedName, loadDiff, svnRemoteDelete, loadTree, localMode, svnDelete, localPath, loadLocalTree]);
 
@@ -247,6 +268,52 @@ function App() {
       setCommitting(false);
     }
   }, [activeId, workspaces, svnCommit, svnUpdate, svnResolve]);
+
+  // Replace (do_replace — upload local directory to remote SVN URL)
+  const handleReplace = useCallback(async (source: string, targetUrl: string, commitMsg: string) => {
+    setReplacing(true);
+    await tick();
+    try {
+      const result = await doReplace(source, targetUrl, commitMsg);
+      setOutput({ type: "success", text: result.message });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput({ type: "error", text: `Replace 失败: ${msg}` });
+    } finally {
+      setReplacing(false);
+    }
+  }, [doReplace]);
+
+  // Remote rename
+  const handleRename = useCallback(async () => {
+    if (!renameDialog || !renameNewName.trim()) return;
+    setRenameDialog(null);
+    await tick();
+    try {
+      const result = await svnRename(renameDialog.url, renameNewName.trim(), renameMsg.trim() || `rename ${renameDialog.name} to ${renameNewName.trim()}`);
+      setOutput({ type: "success", text: result });
+      await loadTree();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput({ type: "error", text: `重命名失败: ${msg}` });
+    }
+  }, [renameDialog, renameNewName, renameMsg, svnRename, loadTree]);
+
+  // Remote mkdir
+  const handleMkdir = useCallback(async () => {
+    if (!mkdirParentUrl || !mkdirName.trim()) return;
+    setMkdirParentUrl(null);
+    await tick();
+    try {
+      const dirUrl = `${mkdirParentUrl.replace(/\/?$/, "/")}${mkdirName.trim()}`;
+      const result = await svnMkdir(dirUrl, mkdirMsg.trim() || `create directory ${mkdirName.trim()}`);
+      setOutput({ type: "success", text: `目录已创建:\n${result}` });
+      await loadTree();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput({ type: "error", text: `创建目录失败: ${msg}` });
+    }
+  }, [mkdirParentUrl, mkdirName, mkdirMsg, svnMkdir, loadTree]);
 
   // Load log
   const loadLog = useCallback(async (url: string) => {
@@ -287,6 +354,12 @@ function App() {
   // Generic file picker for Add/Delete operations
   const pickFile = useCallback(async (): Promise<string | null> => {
     const selected = await open({ multiple: false, directory: false });
+    return selected || null;
+  }, []);
+
+  // Directory picker for Replace source (both files and directories can be replaced)
+  const pickReplaceSource = useCallback(async (): Promise<string | null> => {
+    const selected = await open({ multiple: false, directory: true });
     return selected || null;
   }, []);
 
@@ -538,6 +611,14 @@ function App() {
     return () => dragRegionRef.current?.removeEventListener("mousedown", onMouseDown);
   }, []);
 
+  // Listen for SVN progress events from Rust backend
+  useEffect(() => {
+    const unlisten = listen<string>("svn-progress", (event) => {
+      addMessage("info", event.payload);
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [addMessage]);
+
   return (
     <div className="app">
       <div className="top-bar" ref={dragRegionRef}>
@@ -611,6 +692,14 @@ function App() {
                 />
               )}
               {activeTab === "log" && <LogPanel selectedUrl={selectedUrl} logEntries={logEntries} loadingLog={loadingLog} />}
+              {activeTab === "replace" && (
+                <ReplacePanel
+                  selectedUrl={selectedUrl}
+                  replacing={replacing}
+                  onReplace={handleReplace}
+                  onPickSource={pickReplaceSource}
+                />
+              )}
               {activeTab === "commit" && (
                 <CommitPanel
                   workspace={activeWorkspace}
@@ -645,6 +734,64 @@ function App() {
             <div className="modal-buttons">
               <button className="btn" onClick={() => setConfirmDialog(null)}>取消</button>
               <button className="btn btn-primary" onClick={confirmDialog.onConfirm}>确定</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameDialog && (
+        <div className="modal-overlay" onClick={() => setRenameDialog(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <p className="modal-message">重命名 <strong>{renameDialog.name}</strong></p>
+            <div className="field" style={{ margin: "12px 0" }}>
+              <label>新名称</label>
+              <input
+                value={renameNewName}
+                onChange={(e) => setRenameNewName(e.target.value)}
+                placeholder="输入新名称"
+                autoFocus
+              />
+            </div>
+            <div className="field" style={{ margin: "12px 0" }}>
+              <label>提交信息（可选）</label>
+              <input
+                value={renameMsg}
+                onChange={(e) => setRenameMsg(e.target.value)}
+                placeholder={`rename ${renameDialog.name} to ...`}
+              />
+            </div>
+            <div className="modal-buttons">
+              <button className="btn" onClick={() => setRenameDialog(null)}>取消</button>
+              <button className="btn btn-primary" onClick={handleRename} disabled={!renameNewName.trim()}>确定</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mkdirParentUrl && (
+        <div className="modal-overlay" onClick={() => setMkdirParentUrl(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <p className="modal-message">新建文件夹</p>
+            <div className="field" style={{ margin: "12px 0" }}>
+              <label>文件夹名称</label>
+              <input
+                value={mkdirName}
+                onChange={(e) => setMkdirName(e.target.value)}
+                placeholder="输入文件夹名称"
+                autoFocus
+              />
+            </div>
+            <div className="field" style={{ margin: "12px 0" }}>
+              <label>提交信息（可选）</label>
+              <input
+                value={mkdirMsg}
+                onChange={(e) => setMkdirMsg(e.target.value)}
+                placeholder={`create directory ...`}
+              />
+            </div>
+            <div className="modal-buttons">
+              <button className="btn" onClick={() => setMkdirParentUrl(null)}>取消</button>
+              <button className="btn btn-primary" onClick={handleMkdir} disabled={!mkdirName.trim()}>确定</button>
             </div>
           </div>
         </div>

@@ -86,9 +86,19 @@ export function useSvnCommands(workspaces: Workspace[], activeId: string) {
     return invoke("svn_remote_delete", { url, message, ...creds(ws) });
   }, [workspaces, activeId]);
 
+  const svnRename = useCallback(async (url: string, newName: string, message: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_remote_rename", { url, newName, message, ...creds(ws) });
+  }, [workspaces, activeId]);
+
+  const svnMkdir = useCallback(async (url: string, message: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_mkdir", { url, message, ...creds(ws) });
+  }, [workspaces, activeId]);
+
   const readLocalDir = useCallback(async (path: string): Promise<SvnEntry[]> => {
     return invoke("read_local_dir", { path });
   }, []);
 
-  return { svnLs, svnLog, doReplace, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, readLocalDir };
+  return { svnLs, svnLog, doReplace, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, svnRename, svnMkdir, readLocalDir };
 }
