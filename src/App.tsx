@@ -1,136 +1,30 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Folder, File, ChevronRight, ChevronDown, Loader2, Settings, Sun, Moon, RefreshCw, ArrowLeft, Filter, ArrowUpDown, Search, History } from "lucide-react";
+import { RefreshCw, Download, FilePlus, Trash2, RotateCcw, Wrench, ArrowDownToLine, Settings } from "lucide-react";
+import { useWorkspaces } from "./hooks/useWorkspaces";
+import { useSvnCommands } from "./hooks/useSvnCommands";
+import { useTree } from "./hooks/useTree";
+import { WorkspaceBar } from "./components/WorkspaceBar";
+import { TreePanel } from "./components/TreePanel";
+import { TabBar } from "./components/TabBar";
+import { Toolbar } from "./components/Toolbar";
+import { TerminalPanel } from "./components/TerminalPanel";
+import type { TerminalMessage } from "./components/TerminalPanel";
+import { LogPanel } from "./components/panels/LogPanel";
+import { CommitPanel } from "./components/panels/ReplacePanel";
+import { StatusPanel } from "./components/panels/StatusPanel";
+import { DiffPanel } from "./components/panels/DiffPanel";
+import { SettingsPanel } from "./components/panels/SettingsPanel";
+import { WorkspacePanel } from "./components/panels/WorkspacePanel";
+import type { ToolbarAction } from "./components/Toolbar";
+import type { SvnLogEntry } from "./types";
 import "./index.css";
 
 const appWindow = getCurrentWindow();
 
-interface SvnEntry {
-  name: string;
-  kind: string;
-  date: string;
-}
-
-interface ReplaceResult {
-  success: boolean;
-  message: string;
-}
-
-interface SvnLogEntry {
-  revision: string;
-  author: string;
-  date: string;
-  message: string;
-}
-
-interface TreeNode {
-  name: string;
-  fullUrl: string;
-  kind: string;
-  date: string;
-  children: TreeNode[];
-  expanded: boolean;
-  loaded: boolean;
-}
-
-function TreeItem({
-  node,
-  depth,
-  onSelect,
-  selectedUrl,
-  isFiltered,
-  sortEntries,
-  searchText,
-  matchesSearch,
-}: {
-  node: TreeNode;
-  depth: number;
-  onSelect: (url: string, name: string) => void;
-  selectedUrl: string | null;
-  isFiltered: (name: string, kind: string) => boolean;
-  sortEntries: (entries: TreeNode[]) => TreeNode[];
-  searchText: string;
-  matchesSearch: (node: TreeNode, text: string) => boolean;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [, forceUpdate] = useState(0);
-
-  const toggle = async () => {
-    if (node.kind !== "dir") {
-      onSelect(node.fullUrl, node.name);
-      return;
-    }
-
-    if (!node.loaded) {
-      setLoading(true);
-      try {
-        const entries: SvnEntry[] = await invoke("svn_ls", {
-          url: node.fullUrl.replace(/\/?$/, "/"),
-        });
-        node.children = entries
-          .filter((e) => e.name)
-          .map((e) => ({
-            name: e.name,
-            fullUrl: `${node.fullUrl.replace(/\/?$/, "/")}${e.name}`,
-            kind: e.kind,
-            date: e.date,
-            children: [],
-            expanded: false,
-            loaded: false,
-          }));
-        node.loaded = true;
-      } finally {
-        setLoading(false);
-      }
-    }
-    node.expanded = !node.expanded;
-    forceUpdate((n) => n + 1);
-    onSelect(node.fullUrl, node.name);
-  };
-
-  const isSelected = selectedUrl === node.fullUrl;
-
-  return (
-    <div>
-      <div
-        className={`tree-node ${isSelected ? "tree-selected" : ""}`}
-        style={{ paddingLeft: depth * 16 + 8 }}
-        onClick={toggle}
-      >
-        <span className="tree-icon">
-          {node.kind === "dir"
-            ? loading
-              ? <Loader2 size={12} className="spin" />
-              : node.expanded
-                ? <ChevronDown size={12} />
-                : <ChevronRight size={12} />
-            : null}
-        </span>
-        <span className="tree-kind">{node.kind === "dir" ? <Folder size={14} /> : <File size={14} />}</span>
-        <span className="tree-name">{node.name}</span>
-      </div>
-      {node.expanded &&
-        sortEntries(node.children)
-          .filter((c) => !isFiltered(c.name, c.kind))
-          .filter((c) => matchesSearch(c, searchText))
-          .map((child) => (
-          <TreeItem
-            key={child.fullUrl}
-            node={child}
-            depth={depth + 1}
-            onSelect={onSelect}
-            selectedUrl={selectedUrl}
-            isFiltered={isFiltered}
-            sortEntries={sortEntries}
-            searchText={searchText}
-            matchesSearch={matchesSearch}
-          />
-        ))}
-    </div>
-  );
-}
+// Force React to flush pending state updates before long async operations
+const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
 function App() {
   // Theme
@@ -139,500 +33,622 @@ function App() {
     if (saved === "light" || saved === "dark") return saved;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
-  // View: "replace" | "settings" | "log"
-  const [view, setView] = useState<"replace" | "settings" | "log">("replace");
+  // Tab-based navigation
+  const [activeTab, setActiveTab] = useState<"status" | "log" | "commit" | "diff">("commit");
+  const [overlay, setOverlay] = useState<"settings" | "workspace" | null>(null);
+  const [editWsId, setEditWsId] = useState<string | null>(null);
+  const [wsForm, setWsForm] = useState({ name: "", baseUrl: "", username: "", password: "" });
 
-  // Base URL (stored in localStorage)
-  const [baseUrl, setBaseUrl] = useState(() => {
-    const saved = (localStorage.getItem("baseUrl") || "").trim();
-    try { return decodeURI(saved); } catch { return saved; }
-  });
+  // Hooks
+  const { workspaces, activeId, activeWorkspace, setWorkspaces, setActiveId, setWsField } = useWorkspaces();
+  const { svnLs, svnLog, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, readLocalDir } = useSvnCommands(workspaces, activeId);
+  const {
+    treeRoot, treeLoading, selectedUrl, selectedName,
+    filterOpen, searchText, setSearchText, setFilterOpen,
+    setSelectedUrl, setSelectedName,
+    resetTree, loadTree,
+    sortEntries, isFiltered, matchesSearch,
+    statusMap, setStatusMap,
+    localMode, setLocalMode, loadLocalTree,
+    localPath,
+  } = useTree(activeWorkspace, svnLs, readLocalDir);
 
-  // Tree
-  const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null);
-  const [treeLoading, setTreeLoading] = useState(false);
-  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [filterExt, setFilterExt] = useState(() => (localStorage.getItem("filterExt") || ""));
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [sortByDate, setSortByDate] = useState(() => localStorage.getItem("sortByDate") === "true");
-
-  // Sort helper: newest first
-  const sortEntries = useCallback((entries: TreeNode[]) => {
-    if (!sortByDate) return entries;
-    return [...entries].sort((a, b) => {
-      if (a.date < b.date) return 1;
-      if (a.date > b.date) return -1;
-      return 0;
-    });
-  }, [sortByDate]);
-
-  // Filter helper: returns true if a file-type node should be hidden
-  const isFiltered = useCallback((name: string, kind: string) => {
-    if (kind === "dir" || !filterExt.trim()) return false;
-    const exts = filterExt.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
-    if (exts.length === 0) return false;
-    const lower = name.toLowerCase();
-    return exts.some((e) => lower.endsWith(e));
-  }, [filterExt]);
-
-  // Search
-  const [searchText, setSearchText] = useState("");
-
-  // Returns true if the node or any descendant matches the search text
-  const matchesSearch = useCallback((node: TreeNode, text: string): boolean => {
-    if (!text.trim()) return true;
-    const lower = text.toLowerCase();
-    if (node.name.toLowerCase().includes(lower)) return true;
-    return node.children.some((c) => matchesSearch(c, text));
+  // Commit
+  const [committing, setCommitting] = useState(false);
+  // Update
+  const [updating, setUpdating] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [reverting, setReverting] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [checkingOut, setCheckingOut] = useState(false);
+  // Diff
+  const [diffContent, setDiffContent] = useState<string | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const msgIdRef = useRef(0);
+  const [messages, setMessages] = useState<TerminalMessage[]>([]);
+  const addMessage = useCallback((type: string, text: string) => {
+    const id = ++msgIdRef.current;
+    setMessages((prev) => [...prev, { id, type, text }]);
   }, []);
+  // Backward-compatible: existing setOutput calls also append to terminal
+  const setOutput = useCallback((msg: { type: string; text: string } | null) => {
+    if (msg) addMessage(msg.type, msg.text);
+  }, [addMessage]);
 
-  // Replace
-  const [sourcePath, setSourcePath] = useState("");
-  const [commitMsg, setCommitMsg] = useState("update shj-fxc");
-  const [replacing, setReplacing] = useState(false);
-  const [output, setOutput] = useState<{ type: string; text: string } | null>(null);
+  // Status selection
+  const [statusSelectedPaths, setStatusSelectedPaths] = useState<string[]>([]);
+
+  // Confirm dialog
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+
+  // Log
+  const [logEntries, setLogEntries] = useState<SvnLogEntry[] | null>(null);
+  const [loadingLog, setLoadingLog] = useState(false);
 
   // Drag-drop
-  const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
 
-  // Drag refs
-  const headerRef = useRef<HTMLElement>(null);
+  // Refs
   const dragRegionRef = useRef<HTMLDivElement>(null);
 
   // Splitter
   const [leftWidth, setLeftWidth] = useState(280);
   const splitting = useRef(false);
 
-  // Persist theme
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("theme", theme);
-  }, [theme]);
+  const closeOverlay = useCallback(() => setOverlay(null), []);
 
-  // Persist baseUrl (trimmed)
-  useEffect(() => {
-    localStorage.setItem("baseUrl", baseUrl.trim());
-  }, [baseUrl]);
-
-  // Persist filter extension
-  useEffect(() => {
-    localStorage.setItem("filterExt", filterExt);
-  }, [filterExt]);
-
-  // Persist sort preference
-  useEffect(() => {
-    localStorage.setItem("sortByDate", String(sortByDate));
-  }, [sortByDate]);
-
-  // Restore cached tree on mount
-  useEffect(() => {
-    if (!baseUrl) return;
-    try {
-      const cached = localStorage.getItem(`treeCache_${baseUrl}`);
-      if (cached) {
-        const root = JSON.parse(cached) as TreeNode;
-        // Reset all sub-nodes to collapsed/unloaded so they fetch fresh on expand
-        const reset = (n: TreeNode) => {
-          n.expanded = n.kind === "dir" && n.children.length > 0 && n.name === (baseUrl.split("/").filter(Boolean).pop() || "root");
-          n.loaded = n === root;
-          n.children.forEach(reset);
-        };
-        reset(root);
-        setTreeRoot(root);
-      }
-    } catch { /* ignore cache errors */ }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Drag-drop listener
-  useEffect(() => {
-    const unlisten = getCurrentWindow().onDragDropEvent((e) => {
-      switch (e.payload.type) {
-        case "enter":
-          dragCounter.current += 1;
-          setDragOver(true);
-          break;
-        case "leave":
-          dragCounter.current -= 1;
-          if (dragCounter.current <= 0) {
-            dragCounter.current = 0;
-            setDragOver(false);
-          }
-          break;
-        case "over":
-          break;
-        case "drop":
-          dragCounter.current = 0;
-          setDragOver(false);
-          if (e.payload.paths.length > 0) {
-            setSourcePath(e.payload.paths[0]);
-          }
-          break;
-      }
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
-
-  // Manual window drag (replaces data-tauri-drag-region)
-  useEffect(() => {
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.buttons === 1) {
-        e.detail === 2
-          ? appWindow.toggleMaximize()
-          : appWindow.startDragging();
-      }
-    };
-    const header = headerRef.current;
-    const dragRegion = dragRegionRef.current;
-    header?.addEventListener("mousedown", onMouseDown);
-    dragRegion?.addEventListener("mousedown", onMouseDown);
-    return () => {
-      header?.removeEventListener("mousedown", onMouseDown);
-      dragRegion?.removeEventListener("mousedown", onMouseDown);
-    };
-  }, []);
-
-  const loadTree = useCallback(async () => {
-    if (!baseUrl.trim()) return;
-    setTreeLoading(true);
-    setTreeRoot(null);
-    setSelectedUrl(null);
-    setSelectedName(null);
-    try {
-      const url = baseUrl.trim().replace(/\/?$/, "/");
-      const entries: SvnEntry[] = await invoke("svn_ls", { url });
-      const root: TreeNode = {
-        name: baseUrl.split("/").filter(Boolean).pop() || "root",
-        fullUrl: url,
-        kind: "dir",
-        date: "",
-        children: entries
-          .filter((e) => e.name)
-          .map((e) => ({
-            name: e.name,
-            fullUrl: `${url}${e.name}`,
-            kind: e.kind,
-            date: e.date,
-            children: [],
-            expanded: false,
-            loaded: false,
-          })),
-        expanded: true,
-        loaded: true,
-      };
-      // Cache
-      try { localStorage.setItem(`treeCache_${baseUrl}`, JSON.stringify(root)); } catch { /* ignore */ }
-      setTreeRoot(root);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `Load failed: ${msg}` });
-    } finally {
-      setTreeLoading(false);
-    }
-  }, [baseUrl]);
-
+  // Tree selection
   const onSelect = useCallback((url: string, name: string) => {
     setSelectedUrl(url);
     setSelectedName(name);
-  }, []);
+  }, [setSelectedUrl, setSelectedName]);
 
-  const pickSource = useCallback(async () => {
-    const defaultPath = sourcePath
-      ? sourcePath.replace(/\/$/, "").split("/").slice(0, -1).join("/") || "/"
-      : undefined;
-    const selected = await open({
-      multiple: false,
-      directory: true,
-      defaultPath,
-    });
-    if (selected) setSourcePath(selected);
-  }, [sourcePath]);
+  const handleLoadTree = useCallback(async () => {
+    const err = await loadTree();
+    if (err) { setOutput({ type: "error", text: `Load failed: ${err}` }); return; }
+    // Load local file status
+    const ws = workspaces.find((w) => w.id === activeId);
+    if (ws?.sourcePath?.trim()) {
+      try {
+        const entries = await svnStatus(ws.sourcePath.trim());
+        const map: Record<string, string> = {};
+        for (const e of entries) {
+          map[e.path] = e.item;
+        }
+        setStatusMap(map);
+      } catch { /* status is optional */ }
+    }
+  }, [loadTree, workspaces, activeId, svnStatus, setStatusMap]);
 
-  const doReplace = useCallback(async () => {
-    if (!selectedUrl || !sourcePath.trim()) {
-      setOutput({ type: "error", text: "请选择目标目录和源文件" });
+  const handleToggleTreeMode = useCallback(async () => {
+    if (localMode) {
+      setLocalMode(false);
+      await handleLoadTree();
+    } else {
+      const selected = await open({ multiple: false, directory: true });
+      if (!selected) return;
+      setLocalMode(true);
+      const err = await loadLocalTree(selected);
+      if (err) { setOutput({ type: "error", text: `Load failed: ${err}` }); return; }
+      // Load SVN status for the local directory
+      try {
+        const entries = await svnStatus(selected);
+        const map: Record<string, string> = {};
+        for (const e of entries) map[e.path] = e.item;
+        setStatusMap(map);
+      } catch { /* status is optional */ }
+    }
+  }, [localMode, handleLoadTree, loadLocalTree, svnStatus, setStatusMap, setLocalMode]);
+
+  const handleRefreshTree = useCallback(async () => {
+    if (localMode && localPath) {
+      const err = await loadLocalTree(localPath);
+      if (err) { setOutput({ type: "error", text: `刷新失败: ${err}` }); }
+    } else {
+      await handleLoadTree();
+    }
+  }, [localMode, localPath, loadLocalTree, handleLoadTree]);
+
+  // Force loading state flush before any long async invoke
+
+  // Load diff
+  const loadDiff = useCallback(async (url: string) => {
+    setLoadingDiff(true);
+    await tick();
+    try {
+      const content = await svnDiff(url);
+      setDiffContent(content || "(empty diff)");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput({ type: "error", text: `Diff failed: ${msg}` });
+      setDiffContent(null);
+    } finally {
+      setLoadingDiff(false);
+    }
+  }, [svnDiff]);
+
+  // Tree node context menu actions
+  const handleContextAction = useCallback((action: string, url: string, name: string) => {
+    switch (action) {
+      case "copy-url":
+        navigator.clipboard.writeText(url).catch(() => {});
+        setOutput({ type: "success", text: `已复制: ${url}` });
+        break;
+      case "view-log":
+        setSelectedUrl(url);
+        setSelectedName(name);
+        setActiveTab("log");
+        break;
+      case "diff":
+        setDiffContent(null);
+        setActiveTab("diff");
+        loadDiff(url);
+        break;
+      case "delete":
+        if (localMode) {
+          setConfirmDialog({
+            message: `确认从 SVN 删除 ${name}？`,
+            onConfirm: () => {
+              setConfirmDialog(null);
+              svnDelete(url)
+                .then((result) => {
+                  setOutput({ type: "success", text: `删除成功:\n${result}` });
+                  if (localPath) loadLocalTree(localPath);
+                })
+                .catch((e: unknown) => setOutput({ type: "error", text: `删除失败: ${e instanceof Error ? e.message : String(e)}` }));
+            },
+          });
+        } else {
+          setConfirmDialog({
+            message: `确认从 SVN 仓库删除 ${name}？此操作将直接提交。`,
+            onConfirm: () => {
+              setConfirmDialog(null);
+              setOutput({ type: "success", text: `正在删除 ${url}...` });
+              svnRemoteDelete(url, `delete ${name}`)
+                .then(async (result) => {
+                  setOutput({ type: "success", text: `删除成功:\n${result}` });
+                  await loadTree();
+                })
+                .catch((e: unknown) => setOutput({ type: "error", text: `删除失败: ${e instanceof Error ? e.message : String(e)}` }));
+            },
+          });
+        }
+        break;
+    }
+  }, [setSelectedUrl, setSelectedName, loadDiff, svnRemoteDelete, loadTree, localMode, svnDelete, localPath, loadLocalTree]);
+
+  // Standard Commit
+  const handleCommit = useCallback(async () => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    if (!ws?.sourcePath.trim() || !ws?.commitMsg.trim()) {
+      setOutput({ type: "error", text: "请填写工作副本路径和提交信息" });
       return;
     }
-    setReplacing(true);
-    setOutput(null);
+    setCommitting(true);
+    await tick();
     try {
-      const result: ReplaceResult = await invoke("do_replace", {
-        source: sourcePath,
-        targetUrl: selectedUrl,
-        commitMsg: commitMsg || "update shj-fxc",
-      });
-      setOutput({ type: "success", text: result.message.trim() });
+      // Auto-update before commit to avoid out-of-date errors (best-effort)
+      setOutput({ type: "success", text: "正在更新工作副本..." });
+      try { await svnUpdate(ws.sourcePath.trim(), "working"); } catch { /* update failed, attempt commit anyway */ }
+      // Auto-resolve any remaining conflicts (best-effort)
+      try { await svnResolve(ws.sourcePath.trim(), "working", true); } catch { /* resolve failed, attempt commit anyway */ }
+      const result = await svnCommit(ws.sourcePath.trim(), ws.commitMsg.trim());
+      setOutput({ type: "success", text: result });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setOutput({ type: "error", text: msg });
     } finally {
-      setReplacing(false);
+      setCommitting(false);
     }
-  }, [selectedUrl, sourcePath, commitMsg]);
+  }, [activeId, workspaces, svnCommit, svnUpdate, svnResolve]);
 
-  // Log
-  const [logEntries, setLogEntries] = useState<SvnLogEntry[] | null>(null);
-  const [loadingLog, setLoadingLog] = useState(false);
-
+  // Load log
   const loadLog = useCallback(async (url: string) => {
     setLoadingLog(true);
-    setLogEntries(null);
+    await tick();
     try {
-      const entries: SvnLogEntry[] = await invoke("svn_log", { url, limit: 50 });
-      setLogEntries(entries);
+      setLogEntries(await svnLog(url, 50));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setOutput({ type: "error", text: `Log failed: ${msg}` });
+      setLogEntries(null);
     } finally {
       setLoadingLog(false);
     }
+  }, [svnLog]);
+
+  // Auto-load log when entering log tab
+  useEffect(() => {
+    if (activeTab === "log" && selectedUrl) loadLog(selectedUrl);
+  }, [activeTab, selectedUrl, loadLog]);
+
+  // Source directory picker
+  const pickSource = useCallback(async () => {
+    const current = activeWorkspace?.sourcePath || "";
+    const defaultPath = current
+      ? current.replace(/\/$/, "").split("/").slice(0, -1).join("/") || "/"
+      : undefined;
+    const selected = await open({ multiple: false, directory: true, defaultPath });
+    if (selected) setWsField("sourcePath", selected);
+  }, [activeWorkspace?.sourcePath, setWsField]);
+
+  // Status directory picker
+  const pickStatusDir = useCallback(async (): Promise<string | null> => {
+    const selected = await open({ multiple: false, directory: true });
+    return selected || null;
   }, []);
 
-  const doLog = useCallback(() => {
-    if (!selectedUrl) return;
-    setView("log");
-  }, [selectedUrl]);
+  // Generic file picker for Add/Delete operations
+  const pickFile = useCallback(async (): Promise<string | null> => {
+    const selected = await open({ multiple: false, directory: false });
+    return selected || null;
+  }, []);
 
-  // Load/auto-reload log when entering log view or switching tree node
-  useEffect(() => {
-    if (view === "log" && selectedUrl) loadLog(selectedUrl);
-  }, [view, selectedUrl, loadLog]);
+  // Toolbar actions per active tab
+  const toolbarActions = useMemo((): ToolbarAction[] => {
+    switch (activeTab) {
+      case "log":
+        return [{ id: "refresh", label: "Refresh", icon: RefreshCw, disabled: !selectedUrl || loadingLog }];
+      case "diff":
+        return [{ id: "refresh", label: "Refresh", icon: RefreshCw, disabled: !selectedUrl || loadingDiff }];
+      case "status":
+        return [
+          { id: "checkout", label: "Checkout", icon: ArrowDownToLine, disabled: checkingOut || !activeWorkspace?.baseUrl },
+          { id: "update", label: "Update", icon: Download, disabled: updating || !activeWorkspace?.sourcePath },
+          { id: "add", label: "Add", icon: FilePlus, disabled: adding || !activeWorkspace?.sourcePath },
+          { id: "delete", label: "Delete", icon: Trash2, disabled: deleting || !activeWorkspace?.sourcePath },
+          { id: "revert", label: "Revert", icon: RotateCcw, disabled: reverting || !activeWorkspace?.sourcePath },
+          { id: "cleanup", label: "Cleanup", icon: Wrench, disabled: cleaning || !activeWorkspace?.sourcePath },
+        ];
+      default:
+        return [];
+    }
+  }, [activeTab, selectedUrl, updating, adding, deleting, reverting, cleaning, checkingOut, loadingLog, loadingDiff, activeWorkspace?.sourcePath, activeWorkspace?.baseUrl]);
 
-  // Format date for display
-  const fmtDate = (d: string) => {
-    try { return new Date(d).toLocaleString(); } catch { return d; }
-  };
+  const handleToolbarAction = useCallback(async (action: string) => {
+    switch (action) {
+      case "settings": setOverlay("settings"); break;
+      case "refresh":
+        if (!selectedUrl) return;
+        if (activeTab === "diff") {
+          loadDiff(selectedUrl);
+        } else {
+          loadLog(selectedUrl);
+        }
+        break;
+      case "checkout": {
+        if (!activeWorkspace?.baseUrl?.trim()) {
+          setOutput({ type: "error", text: "请先配置 SVN 地址" });
+          return;
+        }
+        const dest = await open({ multiple: false, directory: true });
+        if (!dest) return;
+        setCheckingOut(true);
+        await tick();
+        try {
+          const result = await svnCheckout(activeWorkspace.baseUrl.trim(), dest);
+          setOutput({ type: "success", text: result });
+          setWsField("sourcePath", dest);
+        } catch (e: unknown) {
+          setOutput({ type: "error", text: `Checkout 失败: ${e instanceof Error ? e.message : String(e)}` });
+        } finally { setCheckingOut(false); }
+        break;
+      }
+      case "update": {
+        if (!activeWorkspace?.sourcePath?.trim()) {
+          setOutput({ type: "error", text: "请先在 Commit 标签页中设置 Source Directory（工作副本路径）" });
+          return;
+        }
+        setUpdating(true);
+        await tick();
+        try {
+          const result = await svnUpdate(activeWorkspace.sourcePath.trim(), "working");
+          setOutput({ type: "success", text: result });
+        } catch (e: unknown) {
+          setOutput({ type: "error", text: `Update 失败: ${e instanceof Error ? e.message : String(e)}` });
+        } finally { setUpdating(false); }
+        break;
+      }
+      case "add": {
+        const targets = statusSelectedPaths.length > 0 ? statusSelectedPaths : await pickFile().then((f) => f ? [f] : []);
+        if (targets.length === 0) return;
+        setAdding(true);
+        await tick();
+        try {
+          const results = await Promise.all(targets.map((f) => svnAdd(f)));
+          setOutput({ type: "success", text: results.join("").trim() || `已添加 ${targets.length} 项` });
+        } catch (e: unknown) {
+          setOutput({ type: "error", text: `Add 失败: ${e instanceof Error ? e.message : String(e)}` });
+        } finally { setAdding(false); setStatusSelectedPaths([]); }
+        break;
+      }
+      case "delete": {
+        const targets = statusSelectedPaths.length > 0 ? statusSelectedPaths : await pickFile().then((f) => f ? [f] : []);
+        if (targets.length === 0) return;
+        setDeleting(true);
+        await tick();
+        try {
+          const results = await Promise.all(targets.map((f) => svnDelete(f)));
+          setOutput({ type: "success", text: results.join("").trim() || `已删除 ${targets.length} 项` });
+        } catch (e: unknown) {
+          setOutput({ type: "error", text: `Delete 失败: ${e instanceof Error ? e.message : String(e)}` });
+        } finally { setDeleting(false); setStatusSelectedPaths([]); }
+        break;
+      }
+      case "revert": {
+        const targets = statusSelectedPaths.length > 0 ? statusSelectedPaths : [];
+        if (targets.length === 0) {
+          setOutput({ type: "error", text: "请先在 Status 列表中选择要还原的文件" });
+          return;
+        }
+        setReverting(true);
+        await tick();
+        try {
+          const results = await Promise.all(targets.map((f) => svnRevert(f)));
+          setOutput({ type: "success", text: results.join("").trim() || `已还原 ${targets.length} 项` });
+        } catch (e: unknown) {
+          setOutput({ type: "error", text: `Revert 失败: ${e instanceof Error ? e.message : String(e)}` });
+        } finally { setReverting(false); setStatusSelectedPaths([]); }
+        break;
+      }
+      case "cleanup": {
+        if (!activeWorkspace?.sourcePath?.trim()) {
+          setOutput({ type: "error", text: "请先设置 Source Directory" });
+          return;
+        }
+        setCleaning(true);
+        await tick();
+        try {
+          const result = await svnCleanup(activeWorkspace.sourcePath.trim());
+          setOutput({ type: "success", text: result || "Cleanup 完成" });
+        } catch (e: unknown) {
+          setOutput({ type: "error", text: `Cleanup 失败: ${e instanceof Error ? e.message : String(e)}` });
+        } finally { setCleaning(false); }
+        break;
+      }
+      default: setOutput({ type: "error", text: `功能 "${action}" 尚未实现` });
+    }
+  }, [selectedUrl, loadLog, loadDiff, activeTab, activeWorkspace?.sourcePath, activeWorkspace?.baseUrl, svnUpdate, svnCheckout, svnAdd, svnDelete, svnRevert, svnCleanup, pickFile, statusSelectedPaths, setWsField, checkingOut]);
 
-  // Splitter mouse handlers
+  // Test connection
+  const handleTestConnection = useCallback(async () => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    if (!ws?.baseUrl.trim()) {
+      setOutput({ type: "error", text: "请先配置 SVN 地址" });
+      return;
+    }
+    setOutput({ type: "success", text: "正在测试连接..." });
+    await tick();
+    try {
+      const result = await testConnection(ws.baseUrl);
+      setOutput({ type: "success", text: result });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput({ type: "error", text: `连接失败: ${msg}` });
+    }
+  }, [activeId, workspaces, testConnection]);
+
+  // Splitter
   const onSplitterDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     splitting.current = true;
     const startX = e.clientX;
     const startW = leftWidth;
-
     const onMove = (ev: MouseEvent) => {
       if (!splitting.current) return;
-      const w = Math.min(Math.max(startW + ev.clientX - startX, 180), window.innerWidth * 0.6);
-      setLeftWidth(w);
+      setLeftWidth(Math.min(Math.max(startW + ev.clientX - startX, 180), window.innerWidth * 0.6));
     };
-
     const onUp = () => {
       splitting.current = false;
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
-
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   }, [leftWidth]);
 
+  // Workspace management
+  const switchWorkspace = useCallback((id: string) => {
+    if (id === activeId) return;
+    setActiveId(id);
+    resetTree();
+    setLogEntries(null);
+  }, [activeId, setActiveId, resetTree]);
+
+  const handleDeleteWorkspace = useCallback((id: string) => {
+    if (workspaces.length <= 1) return;
+    setWorkspaces((prev) => prev.filter((w) => w.id !== id));
+    if (activeId === id) {
+      const remaining = workspaces.filter((w) => w.id !== id);
+      switchWorkspace(remaining[0]?.id || "default");
+    }
+  }, [workspaces, activeId, setWorkspaces, switchWorkspace]);
+
+  const openNewWorkspace = useCallback(() => {
+    setEditWsId(null);
+    setWsForm({ name: "", baseUrl: "", username: "", password: "" });
+    setOverlay("workspace");
+  }, []);
+
+  const openEditWorkspace = useCallback((id: string) => {
+    const ws = workspaces.find((w) => w.id === id);
+    if (!ws) return;
+    setEditWsId(id);
+    setWsForm({ name: ws.name, baseUrl: ws.baseUrl, username: ws.username, password: ws.password });
+    setOverlay("workspace");
+  }, [workspaces]);
+
+  const handleWsFormChange = useCallback((field: string, value: string) => {
+    if (field === "baseUrl") { try { value = decodeURI(value); } catch { /* ignore */ } }
+    setWsForm((f) => ({ ...f, [field]: value }));
+  }, []);
+
+  const saveWorkspace = useCallback(() => {
+    const url = (() => { try { return decodeURI(wsForm.baseUrl.trim()); } catch { return wsForm.baseUrl.trim(); } })();
+    if (!url) return;
+    if (editWsId) {
+      setWorkspaces((prev) => prev.map((w) =>
+        w.id === editWsId ? { ...w, name: wsForm.name || "工作空间", baseUrl: url, username: wsForm.username, password: wsForm.password } : w
+      ));
+    } else {
+      const id = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      setWorkspaces((prev) => [...prev, {
+        id, name: wsForm.name || `工作空间 ${workspaces.length + 1}`, baseUrl: url,
+        username: wsForm.username, password: wsForm.password,
+        sourcePath: "", commitMsg: "update shj-fxc", filterExt: "", sortByDate: false,
+      }]);
+      setActiveId(id);
+    }
+    closeOverlay();
+  }, [editWsId, wsForm, workspaces.length, setWorkspaces, setActiveId, closeOverlay]);
+
+  // Drag-drop listener
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onDragDropEvent((e) => {
+      switch (e.payload.type) {
+        case "enter": dragCounter.current += 1; break;
+        case "leave":
+          dragCounter.current -= 1;
+          if (dragCounter.current <= 0) { dragCounter.current = 0; }
+          break;
+        case "over": break;
+        case "drop":
+          dragCounter.current = 0;
+          if (e.payload.paths.length > 0) setWsField("sourcePath", e.payload.paths[0]);
+          break;
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [setWsField]);
+
+  // Window drag region (panel-drag in left panel)
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.buttons === 1) {
+        e.detail === 2 ? appWindow.toggleMaximize() : appWindow.startDragging();
+      }
+    };
+    dragRegionRef.current?.addEventListener("mousedown", onMouseDown);
+    return () => dragRegionRef.current?.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
   return (
     <div className="app">
-      <div className="layout">
-        {/* Left: Tree (full height) */}
-        <div className="panel-left" style={{ width: leftWidth }}>
-          <div className="panel-drag" ref={dragRegionRef} />
-          <div className="tree-toolbar">
-            <button className="btn" onClick={loadTree} disabled={treeLoading || !baseUrl} style={{ flex: 1 }}>
-              {treeLoading ? <span className="spinner" /> : "Load Tree"}
-            </button>
-            {treeRoot && (
-              <button className="btn btn-icon" onClick={() => setSortByDate((v) => !v)} title={sortByDate ? "按名称排序" : "按日期排序"}>
-                <ArrowUpDown size={14} className={sortByDate ? "text-primary" : ""} />
-              </button>
-            )}
-            {treeRoot && (
-              <button className="btn btn-icon" onClick={() => setFilterOpen((v) => !v)} title="筛选">
-                <Filter size={14} className={filterOpen ? "text-primary" : ""} />
-              </button>
-            )}
-            {treeRoot && (
-              <button className="btn btn-icon" onClick={loadTree} disabled={treeLoading} title="刷新">
-                <RefreshCw size={14} className={treeLoading ? "spin" : ""} />
-              </button>
-            )}
-          </div>
-          <div className="tree-search">
-            <Search size={12} className="tree-search-icon" />
-            <input
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="搜索..."
-            />
-          </div>
-          {filterOpen && (
-            <div className="tree-filter">
-              <input
-                value={filterExt}
-                onChange={(e) => setFilterExt(e.target.value)}
-                placeholder="扩展名, 逗号隔开, 如: .jar,.class"
-              />
-            </div>
-          )}
-          <div className="tree-container">
-            {!baseUrl ? (
-              <div className="tree-empty">请在设置中配置 SVN 地址</div>
-            ) : treeRoot ? (
-              <TreeItem
-                node={treeRoot}
-                depth={0}
-                onSelect={onSelect}
-                selectedUrl={selectedUrl}
-                isFiltered={isFiltered}
-                sortEntries={sortEntries}
-                searchText={searchText}
-                matchesSearch={matchesSearch}
-              />
-            ) : (
-              <div className="tree-empty">点击 Load Tree</div>
-            )}
-          </div>
-        </div>
-
-        {/* Right side: header + content */}
-        <div className="panel-right">
-          <header className="header" ref={headerRef}>
-            <div className="header-left">
-              {view !== "replace" && (
-                <button className="btn-icon" onClick={() => setView("replace")} title="返回">
-                  <ArrowLeft size={16} />
-                </button>
-              )}
-            </div>
-            <div className="header-actions">
-              {view === "replace" && (
-                <button className="btn-icon" onClick={() => setView("settings")} title="设置">
-                  <Settings size={16} />
-                </button>
-              )}
-            </div>
-          </header>
-
-          {view === "log" ? (
-            <div className="main log-view">
-              <div className="field">
-                <label>History</label>
-                <div className="target-display">
-                  <span className="target-path">{selectedUrl}</span>
-                </div>
-              </div>
-              {loadingLog ? (
-                <div style={{ textAlign: "center", padding: 24 }}><span className="spinner" /></div>
-              ) : logEntries === null ? (
-                <div className="log-empty">请选择目标后查看</div>
-              ) : logEntries.length === 0 ? (
-                <div className="log-empty">暂无提交记录</div>
-              ) : (
-                <div className="timeline-container">
-                  {logEntries.map((entry, i) => (
-                    <div key={i} className="timeline-item">
-                      <div className="timeline-item-meta">
-                        <span className="timeline-item-author">{entry.author}</span>
-                        <span>{fmtDate(entry.date)}</span>
-                      </div>
-                      <div className="timeline-item-msg">{entry.message || <span className="log-empty-msg">(no message)</span>}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : view === "replace" ? (
-            <div className="main">
-              <div className="field">
-                <label>Target</label>
-                <div className="target-display">
-                  {selectedName ? (
-                    <span className="target-path">{selectedUrl}</span>
-                  ) : (
-                    <span className="target-placeholder">在左侧树中选择目标目录</span>
-                  )}
-                </div>
-                {selectedName && (
-                  <button className="btn btn-icon" onClick={doLog} title="查看提交历史" style={{ alignSelf: "flex-end" }}>
-                    {loadingLog ? <Loader2 size={14} className="spin" /> : <History size={14} />} Log
-                  </button>
-                )}
-              </div>
-
-              <div className="field">
-                <label>Source Directory</label>
-                <div className={`file-input-row ${dragOver ? "drag-over" : ""}`}>
-                  <input
-                    value={sourcePath}
-                    onChange={(e) => setSourcePath(e.target.value)}
-                    placeholder="拖入文件或文件夹到此处"
-                    readOnly
-                  />
-                  <button className="btn" onClick={pickSource}>
-                    Browse
-                  </button>
-                </div>
-              </div>
-
-              <div className="field">
-                <label>Commit Message</label>
-                <input
-                  value={commitMsg}
-                  onChange={(e) => setCommitMsg(e.target.value)}
-                  placeholder="update shj-fxc"
-                />
-              </div>
-
-              <button
-                className="btn btn-primary"
-                onClick={doReplace}
-                disabled={replacing || !selectedUrl || !sourcePath}
-              >
-                {replacing ? <span className="spinner" /> : "Replace & Commit"}
-              </button>
-
-              {output && (
-                <div className={`output-box ${output.type}`}>
-                  {output.text}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="main">
-              <div className="settings-section">
-                <label>主题</label>
-                <div className="theme-toggle">
-                  <button
-                    className={`theme-opt${theme === "light" ? " active" : ""}`}
-                    onClick={() => setTheme("light")}
-                  >
-                    <Sun size={14} /> 亮色
-                  </button>
-                  <button
-                    className={`theme-opt${theme === "dark" ? " active" : ""}`}
-                    onClick={() => setTheme("dark")}
-                  >
-                    <Moon size={14} /> 暗色
-                  </button>
-                </div>
-              </div>
-
-              <div className="settings-section">
-                <label>SVN 地址</label>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => {
-                    // 自动解码百分号编码的 URL
-                    const decoded = (() => { try { return decodeURI(e.target.value); } catch { return e.target.value; } })();
-                    setBaseUrl(decoded);
-                  }}
-                  placeholder="https://svn.example.com/svn/project/"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Splitter overlay */}
-        <div className="splitter" style={{ left: leftWidth - 3 }} onMouseDown={onSplitterDown} />
+      <div className="top-bar" ref={dragRegionRef}>
+        <button className="top-bar-settings" onClick={() => setOverlay("settings")} title="设置">
+          <Settings size={16} />
+        </button>
       </div>
+      <div className="layout">
+        <WorkspaceBar
+          workspaces={workspaces}
+          activeId={activeId}
+          onSwitch={switchWorkspace}
+          onAdd={openNewWorkspace}
+          onEdit={openEditWorkspace}
+          onDelete={handleDeleteWorkspace}
+        />
+
+        <div className="panel-left" style={{ width: leftWidth }}>
+          <TreePanel
+            treeRoot={treeRoot}
+            treeLoading={treeLoading}
+            selectedUrl={selectedUrl}
+            filterOpen={filterOpen}
+            searchText={searchText}
+            workspace={activeWorkspace}
+            onLoadTree={handleLoadTree}
+            onSelect={onSelect}
+            onSearchChange={setSearchText}
+            onFilterOpenChange={setFilterOpen}
+            onFilterExtChange={(ext) => setWsField("filterExt", ext)}
+            onSortToggle={() => setWsField("sortByDate", !activeWorkspace?.sortByDate)}
+            svnLs={svnLs}
+            sortEntries={sortEntries}
+            isFiltered={isFiltered}
+            matchesSearch={matchesSearch}
+            onContextAction={handleContextAction}
+            statusMap={statusMap}
+            localMode={localMode}
+            onToggleTreeMode={handleToggleTreeMode}
+            readLocalDir={readLocalDir}
+            onRefreshTree={handleRefreshTree}
+            localPath={localPath}
+          />
+        </div>
+
+        <div className="panel-right">
+          {overlay ? (
+            overlay === "settings" ? (
+              <SettingsPanel theme={theme} onThemeChange={setTheme} onClose={closeOverlay} onTestConnection={handleTestConnection} />
+            ) : (
+              <WorkspacePanel
+                editWsId={editWsId}
+                wsForm={wsForm}
+                onFormChange={handleWsFormChange}
+                onSave={saveWorkspace}
+                onCancel={closeOverlay}
+              />
+            )
+          ) : (
+            <>
+              <TabBar activeTab={activeTab} onTabChange={(t) => setActiveTab(t as typeof activeTab)} />
+              <Toolbar actions={toolbarActions} onAction={handleToolbarAction} />
+              {activeTab === "status" && (
+                <StatusPanel
+                  svnStatus={svnStatus}
+                  defaultPath={activeWorkspace?.sourcePath}
+                  onPickDirectory={pickStatusDir}
+                  onOutput={addMessage}
+                  selectedPaths={statusSelectedPaths}
+                  onSelectionChange={setStatusSelectedPaths}
+                />
+              )}
+              {activeTab === "log" && <LogPanel selectedUrl={selectedUrl} logEntries={logEntries} loadingLog={loadingLog} />}
+              {activeTab === "commit" && (
+                <CommitPanel
+                  workspace={activeWorkspace}
+                  committing={committing}
+                  onCommit={handleCommit}
+                  onPickSource={pickSource}
+                  onSetWsField={setWsField}
+                />
+              )}
+              {activeTab === "diff" && (
+                <DiffPanel
+                  selectedUrl={selectedUrl}
+                  selectedName={selectedName}
+                  diffContent={diffContent}
+                  loadingDiff={loadingDiff}
+                  onRefresh={selectedUrl ? () => loadDiff(selectedUrl) : undefined}
+                />
+              )}
+            </>
+          )}
+
+          <TerminalPanel messages={messages} onClear={() => setMessages([])} />
+        </div>
+
+        <div className="splitter" style={{ left: 52 + leftWidth - 3 }} onMouseDown={onSplitterDown} />
+      </div>
+
+      {confirmDialog && (
+        <div className="modal-overlay" onClick={() => setConfirmDialog(null)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <p className="modal-message">{confirmDialog.message}</p>
+            <div className="modal-buttons">
+              <button className="btn" onClick={() => setConfirmDialog(null)}>取消</button>
+              <button className="btn btn-primary" onClick={confirmDialog.onConfirm}>确定</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
