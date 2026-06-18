@@ -722,24 +722,77 @@ async fn svn_remote_delete(app_handle: tauri::AppHandle, url: String, message: S
     Ok(stdout.trim().to_string())
 }
 
-/// 远程重命名 SVN 文件/目录
+/// 远程重命名 SVN 文件/目录（使用工作副本方式避免服务器 502）
 #[tauri::command]
 async fn svn_remote_rename(app_handle: tauri::AppHandle, url: String, new_name: String, message: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
-    let url = encode_svn_url(&url);
-    let trimmed = url.trim_end_matches('/');
+    let trimmed = url.trim().trim_end_matches('/');
     let slash_pos = trimmed.rfind('/').ok_or_else(|| "Invalid URL: no parent directory".to_string())?;
     let parent = &trimmed[..slash_pos];
-    let target_url = format!("{}/{}", parent, new_name);
-    let target_url = encode_svn_url(&target_url);
+    let old_name = &trimmed[slash_pos + 1..];
 
-    let output = run_svn_emit(&app_handle, &["move", &url, &target_url, "-m", &message], &username, &password).await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("svn rename failed: {}", stderr));
+    // Edge case: parent is server root — fall back to direct svn move
+    if parent.matches('/').count() <= 2 {
+        let src = encode_svn_url(&url);
+        let dst = format!("{}/{}", encode_svn_url(parent), new_name);
+        let output = run_svn_emit(&app_handle, &["move", &src, &dst, "-m", &message], &username, &password).await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("svn rename failed: {}", stderr));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Ok(stdout.trim().to_string());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Use working-copy approach to avoid 502 on svn move URL→URL
+    let tmp = tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let work_dir = tmp.path().join("svn-work");
+
+    let encoded_parent = encode_svn_url(parent);
+    let checkout = run_svn_emit(&app_handle, &["checkout", "--depth", "immediates", &encoded_parent, &work_dir.to_string_lossy()], &username, &password).await?;
+    if !checkout.status.success() {
+        let stderr = String::from_utf8_lossy(&checkout.stderr);
+        return Err(format!("svn checkout failed: {}", stderr));
+    }
+
+    let old_path = work_dir.join(old_name);
+    let new_path = work_dir.join(&new_name);
+    if !old_path.exists() {
+        return Err(format!("源 '{}' 不存在，请刷新树后重试。", old_name));
+    }
+
+    // Two-step move to handle case-insensitive filesystems (macOS default)
+    // Direct Shj-fxc → shj-fxc would fail because they resolve to the same path
+    let source_str = old_path.to_string_lossy().to_string();
+    let dest_str = new_path.to_string_lossy().to_string();
+    if source_str.to_lowercase() == dest_str.to_lowercase() {
+        // Case-only rename: use a temporary intermediate name
+        let tmp_name = format!("__tmp_rename_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        let tmp_path = work_dir.join(&tmp_name);
+        let mv1 = run_svn_emit(&app_handle, &["move", &source_str, &tmp_path.to_string_lossy()], &username, &password).await?;
+        if !mv1.status.success() {
+            let stderr = String::from_utf8_lossy(&mv1.stderr);
+            return Err(format!("svn rename failed: {}", stderr));
+        }
+        let mv2 = run_svn_emit(&app_handle, &["move", &tmp_path.to_string_lossy(), &dest_str], &username, &password).await?;
+        if !mv2.status.success() {
+            let stderr = String::from_utf8_lossy(&mv2.stderr);
+            return Err(format!("svn rename failed: {}", stderr));
+        }
+    } else {
+        let mv = run_svn_emit(&app_handle, &["move", &source_str, &dest_str], &username, &password).await?;
+        if !mv.status.success() {
+            let stderr = String::from_utf8_lossy(&mv.stderr);
+            return Err(format!("svn rename failed: {}", stderr));
+        }
+    }
+
+    let commit = run_svn_emit(&app_handle, &["commit", "-m", &message, &work_dir.to_string_lossy()], &username, &password).await?;
+    if !commit.status.success() {
+        let stderr = String::from_utf8_lossy(&commit.stderr);
+        return Err(format!("svn commit failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&commit.stdout);
     Ok(stdout.trim().to_string())
 }
 
