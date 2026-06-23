@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { RefreshCw } from "lucide-react";
 
 export function DiffPanel({
@@ -13,35 +14,36 @@ export function DiffPanel({
   loadingDiff: boolean;
   onRefresh?: () => void;
 }) {
+  const { t } = useTranslation();
   const isEmptyDiff = diffContent === "" || diffContent === "(empty diff)";
 
   return (
     <div className="main diff-panel">
       <div className="diff-header">
         <div className="field" style={{ marginBottom: 0 }}>
-          <label>Diff Target</label>
+          <label>{t("diff.title")}</label>
           <div className="target-display">
             {selectedName ? (
               <span className="target-path">{selectedUrl}</span>
             ) : (
-              <span className="target-placeholder">在左侧树中选择文件</span>
+              <span className="target-placeholder">{t("diff.noSelection")}</span>
             )}
           </div>
         </div>
         {selectedUrl && (
           <button className="btn" onClick={onRefresh} disabled={loadingDiff}>
             {loadingDiff ? <span className="spinner" /> : <RefreshCw size={14} />}
-            {loadingDiff ? "加载中..." : "Refresh"}
+            {loadingDiff ? t("common.loading") : t("common.refresh")}
           </button>
         )}
       </div>
 
       {!selectedUrl ? (
-        <div className="tree-empty">请从左侧树中选择一个文件查看差异</div>
+        <div className="tree-empty">{t("diff.noSelection")}</div>
       ) : loadingDiff && !diffContent ? (
-        <div className="tree-empty"><span className="spinner" /> 加载差异中...</div>
+        <div className="tree-empty"><span className="spinner" /> {t("diff.loading")}</div>
       ) : isEmptyDiff ? (
-        <div className="tree-empty">✓ 该文件在最新提交中无变更</div>
+        <div className="tree-empty">{t("diff.empty")}</div>
       ) : diffContent?.startsWith("Error:") ? (
         <div className="diff-error">{diffContent}</div>
       ) : diffContent ? (

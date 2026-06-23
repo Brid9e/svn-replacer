@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
 import type { Workspace } from "../types";
 
@@ -17,6 +18,7 @@ export function WorkspaceBar({
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; wsId: string } | null>(null);
   const ctxRef = useRef<HTMLDivElement>(null);
 
@@ -46,7 +48,7 @@ export function WorkspaceBar({
           </div>
         ))}
         <div className="ws-bar-spacer" />
-        <div className="ws-bar-item ws-bar-add" onClick={onAdd} title="新建工作空间">
+        <div className="ws-bar-item ws-bar-add" onClick={onAdd} title={t("workspace.add")}>
           <Plus size={16} />
         </div>
       </div>
@@ -60,7 +62,7 @@ export function WorkspaceBar({
               setCtxMenu(null);
             }}
           >
-            编辑工作空间
+            {t("workspace.edit")}
           </div>
           {workspaces.length > 1 && (
             <>
@@ -72,7 +74,7 @@ export function WorkspaceBar({
                   setCtxMenu(null);
                 }}
               >
-                删除工作空间
+                {t("workspace.delete")}
               </div>
             </>
           )}

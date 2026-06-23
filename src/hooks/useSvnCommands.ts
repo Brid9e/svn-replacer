@@ -26,11 +26,6 @@ export function useSvnCommands(workspaces: Workspace[], activeId: string) {
     return invoke("do_replace", { source, targetUrl, commitMsg, ...creds(ws) });
   }, [workspaces, activeId]);
 
-  const testConnection = useCallback(async (url: string): Promise<string> => {
-    const ws = workspaces.find((w) => w.id === activeId);
-    return invoke("test_connection", { url, ...creds(ws) });
-  }, [workspaces, activeId]);
-
   const svnStatus = useCallback(async (path: string): Promise<SvnStatusEntry[]> => {
     const ws = workspaces.find((w) => w.id === activeId);
     return invoke("svn_status", { path, ...creds(ws) });
@@ -96,9 +91,34 @@ export function useSvnCommands(workspaces: Workspace[], activeId: string) {
     return invoke("svn_mkdir", { url, message, ...creds(ws) });
   }, [workspaces, activeId]);
 
+  const svnInfo = useCallback(async (url: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_info", { url, ...creds(ws) });
+  }, [workspaces, activeId]);
+
+  const svnBlame = useCallback(async (url: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_blame", { url, ...creds(ws) });
+  }, [workspaces, activeId]);
+
+  const svnExport = useCallback(async (url: string, dest: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_export", { url, dest, ...creds(ws) });
+  }, [workspaces, activeId]);
+
+  const svnRemoteCopy = useCallback(async (sourceUrl: string, destUrl: string, message: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_remote_copy", { sourceUrl, destUrl, message, ...creds(ws) });
+  }, [workspaces, activeId]);
+
+  const svnRemoteMove = useCallback(async (sourceUrl: string, destUrl: string, message: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeId);
+    return invoke("svn_remote_move", { sourceUrl, destUrl, message, ...creds(ws) });
+  }, [workspaces, activeId]);
+
   const readLocalDir = useCallback(async (path: string): Promise<SvnEntry[]> => {
     return invoke("read_local_dir", { path });
   }, []);
 
-  return { svnLs, svnLog, doReplace, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, svnRename, svnMkdir, readLocalDir };
+  return { svnLs, svnLog, doReplace, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, svnRename, svnMkdir, svnInfo, svnBlame, svnExport, svnRemoteCopy, svnRemoteMove, readLocalDir };
 }

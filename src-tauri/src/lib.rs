@@ -3,6 +3,40 @@ use std::fs;
 use tempfile::tempdir;
 use tauri::{Emitter, Manager};
 
+/// 解码 {U+XXXX} 格式的 Unicode 转义序列为实际字符
+fn decode_u_escapes(s: &str) -> String {
+    let mut result = String::new();
+    let mut rest = s;
+    while let Some(brace_pos) = rest.find('{') {
+        result.push_str(&rest[..brace_pos]);
+        rest = &rest[brace_pos..];
+
+        // Check for {U+XXXX} or {u+XXXX}
+        let bytes = rest.as_bytes();
+        if rest.len() >= 3 && (bytes[1] == b'U' || bytes[1] == b'u') && bytes[2] == b'+' {
+            let hex_start = 3;
+            if let Some(close_pos) = rest[hex_start..].find('}') {
+                let hex_str = &rest[hex_start..hex_start + close_pos];
+                if !hex_str.is_empty() {
+                    if let Ok(code) = u32::from_str_radix(hex_str, 16) {
+                        if let Some(ch) = char::from_u32(code) {
+                            result.push(ch);
+                            rest = &rest[hex_start + close_pos + 1..];
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Not a valid {U+XXXX} sequence, emit the brace as-is
+        result.push('{');
+        rest = &rest[1..];
+    }
+    result.push_str(rest);
+    result
+}
+
 fn find_svn() -> String {
     let candidates = ["/opt/homebrew/bin/svn", "/usr/local/bin/svn", "/usr/bin/svn"];
     for p in &candidates {
@@ -132,12 +166,12 @@ async fn run_svn_emit(app: &tauri::AppHandle, args: &[&str], username: &Option<S
     let output = cmd.output().await.map_err(|e| format!("Failed to execute svn: {}", e))?;
 
     if output.status.success() {
-        let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let out = decode_u_escapes(&String::from_utf8_lossy(&output.stdout).trim());
         if !out.is_empty() {
             let _ = app.emit("svn-progress", &out);
         }
     } else {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let err = decode_u_escapes(&String::from_utf8_lossy(&output.stderr).trim());
         let _ = app.emit("svn-progress", &err);
     }
 
@@ -811,6 +845,73 @@ async fn svn_mkdir(app_handle: tauri::AppHandle, url: String, message: String, u
     Ok(stdout.trim().to_string())
 }
 
+/// SVN info — 查看文件/目录的详细信息
+#[tauri::command]
+async fn svn_info(url: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
+    let url = encode_svn_url(&url);
+    let output = run_svn_with_auth(&["info", &url], &username, &password).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("svn info failed: {}", stderr));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.trim().to_string())
+}
+
+/// SVN blame/annotate — 查看文件每行最后修改人和版本
+#[tauri::command]
+async fn svn_blame(url: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
+    let url = encode_svn_url(&url);
+    let output = run_svn_with_auth(&["blame", &url], &username, &password).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("svn blame failed: {}", stderr));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.trim().to_string())
+}
+
+/// SVN export — 导出到本地（不含 .svn 目录）
+#[tauri::command]
+async fn svn_export(app_handle: tauri::AppHandle, url: String, dest: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
+    let url = encode_svn_url(&url);
+    let output = run_svn_emit(&app_handle, &["export", &url, &dest], &username, &password).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("svn export failed: {}", stderr));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.trim().to_string())
+}
+
+/// SVN remote copy — 在仓库内复制文件/目录
+#[tauri::command]
+async fn svn_remote_copy(app_handle: tauri::AppHandle, source_url: String, dest_url: String, message: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
+    let src = encode_svn_url(&source_url);
+    let dst = encode_svn_url(&dest_url);
+    let output = run_svn_emit(&app_handle, &["copy", &src, &dst, "-m", &message], &username, &password).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("svn copy failed: {}", stderr));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.trim().to_string())
+}
+
+/// SVN remote move — 在仓库内移动文件/目录到指定路径
+#[tauri::command]
+async fn svn_remote_move(app_handle: tauri::AppHandle, source_url: String, dest_url: String, message: String, username: Option<String>, password: Option<String>) -> Result<String, String> {
+    let src = encode_svn_url(&source_url);
+    let dst = encode_svn_url(&dest_url);
+    let output = run_svn_emit(&app_handle, &["move", &src, &dst, "-m", &message], &username, &password).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("svn move failed: {}", stderr));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.trim().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -823,7 +924,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![svn_ls, svn_status, do_replace, test_connection, svn_log, svn_update, svn_checkout, svn_add, svn_delete, svn_diff, svn_revert, svn_cleanup, svn_resolve, svn_commit, svn_remote_delete, svn_remote_rename, svn_mkdir, read_local_dir])
+        .invoke_handler(tauri::generate_handler![svn_ls, svn_status, do_replace, test_connection, svn_log, svn_update, svn_checkout, svn_add, svn_delete, svn_diff, svn_revert, svn_cleanup, svn_resolve, svn_commit, svn_remote_delete, svn_remote_rename, svn_mkdir, read_local_dir, svn_info, svn_blame, svn_export, svn_remote_copy, svn_remote_move])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

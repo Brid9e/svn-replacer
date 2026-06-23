@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { SvnLogEntry } from "../../types";
 
 function fmtDate(d: string) {
@@ -5,7 +6,7 @@ function fmtDate(d: string) {
 }
 
 export function LogPanel({
-  selectedUrl,
+  selectedUrl: _selectedUrl,
   logEntries,
   loadingLog,
 }: {
@@ -13,20 +14,15 @@ export function LogPanel({
   logEntries: SvnLogEntry[] | null;
   loadingLog: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="main log-view">
-      <div className="field">
-        <label>History</label>
-        <div className="target-display">
-          <span className="target-path">{selectedUrl}</span>
-        </div>
-      </div>
       {loadingLog ? (
         <div style={{ textAlign: "center", padding: 24 }}><span className="spinner" /></div>
       ) : logEntries === null ? (
-        <div className="log-empty">请选择目标后查看</div>
+        <div className="log-empty">{t("log.noSelection")}</div>
       ) : logEntries.length === 0 ? (
-        <div className="log-empty">暂无提交记录</div>
+        <div className="log-empty">{t("log.empty")}</div>
       ) : (
         <div className="timeline-container">
           {logEntries.map((entry, i) => (

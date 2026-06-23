@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface TerminalMessage {
   id: number;
@@ -10,13 +11,14 @@ const MIN_HEIGHT = 60;
 const MAX_HEIGHT = 600;
 
 export function TerminalPanel({ messages, onClear }: { messages: TerminalMessage[]; onClear: () => void }) {
+  const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null);
   const resizing = useRef(false);
 
   const [height, setHeight] = useState(() => {
     const saved = localStorage.getItem("terminalHeight");
-    return saved ? Math.min(Math.max(parseInt(saved, 10), MIN_HEIGHT), MAX_HEIGHT) : 160;
+    return saved ? Math.min(Math.max(parseInt(saved, 10), MIN_HEIGHT), MAX_HEIGHT) : 80;
   });
 
   useEffect(() => {
@@ -62,10 +64,10 @@ export function TerminalPanel({ messages, onClear }: { messages: TerminalMessage
   return (
     <div className="terminal" style={{ height }} onContextMenu={handleContextMenu}>
       <div className="terminal-resize-handle" onMouseDown={onHandleMouseDown} />
-      <div className="terminal-header">Output</div>
+      <div className="terminal-header">{t("terminal.title")}</div>
       <div className="terminal-body" ref={scrollRef}>
         {messages.length === 0 ? (
-          <div className="terminal-empty">暂无输出</div>
+          <div className="terminal-empty">{t("terminal.noMessages")}</div>
         ) : (
           messages.map((m) => (
             <div key={m.id} className={`terminal-line terminal-${m.type}`}>
@@ -78,7 +80,7 @@ export function TerminalPanel({ messages, onClear }: { messages: TerminalMessage
       {ctx && (
         <div className="ctx-menu" style={{ position: "fixed", left: ctx.x, top: ctx.y, zIndex: 9999 }}>
           <div className="ctx-menu-item" onMouseDown={() => { onClear(); setCtx(null); }}>
-            清除全部
+            {t("terminal.clear")}
           </div>
         </div>
       )}

@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { RefreshCw, Download, FilePlus, Trash2, RotateCcw, Wrench, ArrowDownToLine, Settings } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
+import { Settings } from "lucide-react";
 import { useWorkspaces } from "./hooks/useWorkspaces";
+import { useTerminal } from "./hooks/useTerminal";
 import { useSvnCommands } from "./hooks/useSvnCommands";
 import { useTree } from "./hooks/useTree";
+import { useSvnOperations } from "./hooks/useSvnOperations";
 import { WorkspaceBar } from "./components/WorkspaceBar";
 import { TreePanel } from "./components/TreePanel";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { TerminalPanel } from "./components/TerminalPanel";
-import type { TerminalMessage } from "./components/TerminalPanel";
 import { LogPanel } from "./components/panels/LogPanel";
 import { CommitPanel } from "./components/panels/CommitPanel";
 import { ReplacePanel } from "./components/panels/ReplacePanel";
@@ -19,7 +20,9 @@ import { StatusPanel } from "./components/panels/StatusPanel";
 import { DiffPanel } from "./components/panels/DiffPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { WorkspacePanel } from "./components/panels/WorkspacePanel";
-import type { ToolbarAction } from "./components/Toolbar";
+import { ConfirmDialog } from "./components/dialogs/ConfirmDialog";
+import { SvnOperationDialog } from "./components/dialogs/SvnOperationDialog";
+import { useSvnActions } from "./hooks/useSvnActions";
 import type { SvnLogEntry } from "./types";
 import "./index.css";
 
@@ -29,6 +32,8 @@ const appWindow = getCurrentWindow();
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
 function App() {
+  const { t } = useTranslation();
+
   // Theme
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const saved = localStorage.getItem("theme");
@@ -48,7 +53,7 @@ function App() {
 
   // Hooks
   const { workspaces, activeId, activeWorkspace, setWorkspaces, setActiveId, setWsField } = useWorkspaces();
-  const { svnLs, svnLog, testConnection, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, svnRename, svnMkdir, readLocalDir, doReplace } = useSvnCommands(workspaces, activeId);
+  const { svnLs, svnLog, svnStatus, svnUpdate, svnCheckout, svnAdd, svnDelete, svnDiff, svnRevert, svnCleanup, svnResolve, svnCommit, svnRemoteDelete, svnRename, svnMkdir, svnInfo, svnBlame, svnExport, svnRemoteCopy, svnRemoteMove, readLocalDir, doReplace } = useSvnCommands(workspaces, activeId);
   const {
     treeRoot, treeLoading, selectedUrl, selectedName,
     filterOpen, searchText, setSearchText, setFilterOpen,
@@ -60,47 +65,31 @@ function App() {
     localPath,
   } = useTree(activeWorkspace, svnLs, readLocalDir);
 
-  // Commit
-  const [committing, setCommitting] = useState(false);
-  // Update
-  const [updating, setUpdating] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [replacing, setReplacing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [reverting, setReverting] = useState(false);
-  const [cleaning, setCleaning] = useState(false);
-  const [checkingOut, setCheckingOut] = useState(false);
-  // Rename dialog
-  const [renameDialog, setRenameDialog] = useState<{ url: string; name: string } | null>(null);
-  const [renameNewName, setRenameNewName] = useState("");
-  const [renameMsg, setRenameMsg] = useState("");
-  // Mkdir dialog
-  const [mkdirParentUrl, setMkdirParentUrl] = useState<string | null>(null);
-  const [mkdirName, setMkdirName] = useState("");
-  const [mkdirMsg, setMkdirMsg] = useState("");
-  // Diff
-  const [diffContent, setDiffContent] = useState<string | null>(null);
-  const [loadingDiff, setLoadingDiff] = useState(false);
-  const msgIdRef = useRef(0);
-  const [messages, setMessages] = useState<TerminalMessage[]>([]);
-  const addMessage = useCallback((type: string, text: string) => {
-    const id = ++msgIdRef.current;
-    setMessages((prev) => [...prev, { id, type, text }]);
-  }, []);
-  // Backward-compatible: existing setOutput calls also append to terminal
-  const setOutput = useCallback((msg: { type: string; text: string } | null) => {
-    if (msg) addMessage(msg.type, msg.text);
-  }, [addMessage]);
+  const { messages, addMessage, setOutput, onClear } = useTerminal();
 
-  // Status selection
-  const [statusSelectedPaths, setStatusSelectedPaths] = useState<string[]>([]);
-
-  // Confirm dialog
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const {
+    committing, setCommitting, updating, setUpdating,
+    adding, setAdding, replacing, setReplacing,
+    deleting, setDeleting, reverting, setReverting,
+    cleaning, setCleaning, checkingOut, setCheckingOut,
+    renameDialog, setRenameDialog, renameNewName, setRenameNewName, renameMsg, setRenameMsg, handleRename,
+    mkdirParentUrl, setMkdirParentUrl, mkdirName, setMkdirName, mkdirMsg, setMkdirMsg, handleMkdir,
+    copyDialog, setCopyDialog, copyDestUrl, setCopyDestUrl, copyMsg, setCopyMsg, handleCopy,
+    moveDialog, setMoveDialog, moveDestUrl, setMoveDestUrl, moveMsg, setMoveMsg, handleMove,
+    confirmDialog, setConfirmDialog,
+    statusSelectedPaths, setStatusSelectedPaths,
+  } = useSvnOperations({
+    svnDelete, svnRemoteDelete, svnRename, svnMkdir, svnRemoteCopy, svnRemoteMove,
+    loadTree, setOutput,
+  });
 
   // Log
   const [logEntries, setLogEntries] = useState<SvnLogEntry[] | null>(null);
   const [loadingLog, setLoadingLog] = useState(false);
+
+  // Diff
+  const [diffContent, setDiffContent] = useState<string | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
 
   // Drag-drop
   const dragCounter = useRef(0);
@@ -122,7 +111,7 @@ function App() {
 
   const handleLoadTree = useCallback(async () => {
     const err = await loadTree();
-    if (err) { setOutput({ type: "error", text: `Load failed: ${err}` }); return; }
+    if (err) { setOutput({ type: "error", text: t("action.loadFailed", { err }) }); return; }
     // Load local file status
     const ws = workspaces.find((w) => w.id === activeId);
     if (ws?.sourcePath?.trim()) {
@@ -146,7 +135,7 @@ function App() {
       if (!selected) return;
       setLocalMode(true);
       const err = await loadLocalTree(selected);
-      if (err) { setOutput({ type: "error", text: `Load failed: ${err}` }); return; }
+      if (err) { setOutput({ type: "error", text: t("action.loadFailed", { err }) }); return; }
       // Load SVN status for the local directory
       try {
         const entries = await svnStatus(selected);
@@ -160,7 +149,7 @@ function App() {
   const handleRefreshTree = useCallback(async () => {
     if (localMode && localPath) {
       const err = await loadLocalTree(localPath);
-      if (err) { setOutput({ type: "error", text: `刷新失败: ${err}` }); }
+      if (err) { setOutput({ type: "error", text: t("action.loadLocalFailed", { err }) }); }
     } else {
       await handleLoadTree();
     }
@@ -174,88 +163,28 @@ function App() {
     await tick();
     try {
       const content = await svnDiff(url);
-      setDiffContent(content || "(empty diff)");
+      setDiffContent(content || t("diff.empty"));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `Diff failed: ${msg}` });
+      setOutput({ type: "error", text: t("action.diffFailed", { msg }) });
       setDiffContent(null);
     } finally {
       setLoadingDiff(false);
     }
-  }, [svnDiff]);
-
-  // Tree node context menu actions
-  const handleContextAction = useCallback((action: string, url: string, name: string) => {
-    switch (action) {
-      case "copy-url":
-        navigator.clipboard.writeText(url).catch(() => {});
-        setOutput({ type: "success", text: `已复制: ${url}` });
-        break;
-      case "view-log":
-        setSelectedUrl(url);
-        setSelectedName(name);
-        setActiveTab("log");
-        break;
-      case "diff":
-        setDiffContent(null);
-        setActiveTab("diff");
-        loadDiff(url);
-        break;
-      case "delete":
-        if (localMode) {
-          setConfirmDialog({
-            message: `确认从 SVN 删除 ${name}？`,
-            onConfirm: () => {
-              setConfirmDialog(null);
-              svnDelete(url)
-                .then((result) => {
-                  setOutput({ type: "success", text: `删除成功:\n${result}` });
-                  if (localPath) loadLocalTree(localPath);
-                })
-                .catch((e: unknown) => setOutput({ type: "error", text: `删除失败: ${e instanceof Error ? e.message : String(e)}` }));
-            },
-          });
-        } else {
-          setConfirmDialog({
-            message: `确认从 SVN 仓库删除 ${name}？此操作将直接提交。`,
-            onConfirm: () => {
-              setConfirmDialog(null);
-              setOutput({ type: "success", text: `正在删除 ${url}...` });
-              svnRemoteDelete(url, `delete ${name}`)
-                .then(async (result) => {
-                  setOutput({ type: "success", text: `删除成功:\n${result}` });
-                  await loadTree();
-                })
-                .catch((e: unknown) => setOutput({ type: "error", text: `删除失败: ${e instanceof Error ? e.message : String(e)}` }));
-            },
-          });
-        }
-        break;
-      case "rename":
-        setRenameDialog({ url, name });
-        setRenameNewName(name);
-        setRenameMsg("");
-        break;
-      case "mkdir":
-        setMkdirParentUrl(url);
-        setMkdirName("");
-        setMkdirMsg("");
-        break;
-    }
-  }, [setSelectedUrl, setSelectedName, loadDiff, svnRemoteDelete, loadTree, localMode, svnDelete, localPath, loadLocalTree]);
+  }, [svnDiff, t]);
 
   // Standard Commit
   const handleCommit = useCallback(async () => {
     const ws = workspaces.find((w) => w.id === activeId);
     if (!ws?.sourcePath.trim() || !ws?.commitMsg.trim()) {
-      setOutput({ type: "error", text: "请填写工作副本路径和提交信息" });
+      setOutput({ type: "error", text: t("commit.noPathOrMsg") });
       return;
     }
     setCommitting(true);
     await tick();
     try {
       // Auto-update before commit to avoid out-of-date errors (best-effort)
-      setOutput({ type: "success", text: "正在更新工作副本..." });
+      setOutput({ type: "success", text: t("commit.autoUpdate") });
       try { await svnUpdate(ws.sourcePath.trim(), "working"); } catch { /* update failed, attempt commit anyway */ }
       // Auto-resolve any remaining conflicts (best-effort)
       try { await svnResolve(ws.sourcePath.trim(), "working", true); } catch { /* resolve failed, attempt commit anyway */ }
@@ -267,7 +196,7 @@ function App() {
     } finally {
       setCommitting(false);
     }
-  }, [activeId, workspaces, svnCommit, svnUpdate, svnResolve]);
+  }, [activeId, workspaces, svnCommit, svnUpdate, svnResolve, t]);
 
   // Replace (do_replace — upload local directory to remote SVN URL)
   const handleReplace = useCallback(async (source: string, targetUrl: string, commitMsg: string) => {
@@ -278,42 +207,11 @@ function App() {
       setOutput({ type: "success", text: result.message });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `Replace 失败: ${msg}` });
+      setOutput({ type: "error", text: `${t("replace.replaceFailed")}: ${msg}` });
     } finally {
       setReplacing(false);
     }
-  }, [doReplace]);
-
-  // Remote rename
-  const handleRename = useCallback(async () => {
-    if (!renameDialog || !renameNewName.trim()) return;
-    setRenameDialog(null);
-    await tick();
-    try {
-      const result = await svnRename(renameDialog.url, renameNewName.trim(), renameMsg.trim() || `rename ${renameDialog.name} to ${renameNewName.trim()}`);
-      setOutput({ type: "success", text: result });
-      await loadTree();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `重命名失败: ${msg}` });
-    }
-  }, [renameDialog, renameNewName, renameMsg, svnRename, loadTree]);
-
-  // Remote mkdir
-  const handleMkdir = useCallback(async () => {
-    if (!mkdirParentUrl || !mkdirName.trim()) return;
-    setMkdirParentUrl(null);
-    await tick();
-    try {
-      const dirUrl = `${mkdirParentUrl.replace(/\/?$/, "/")}${mkdirName.trim()}`;
-      const result = await svnMkdir(dirUrl, mkdirMsg.trim() || `create directory ${mkdirName.trim()}`);
-      setOutput({ type: "success", text: `目录已创建:\n${result}` });
-      await loadTree();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `创建目录失败: ${msg}` });
-    }
-  }, [mkdirParentUrl, mkdirName, mkdirMsg, svnMkdir, loadTree]);
+  }, [doReplace, t]);
 
   // Load log
   const loadLog = useCallback(async (url: string) => {
@@ -323,12 +221,12 @@ function App() {
       setLogEntries(await svnLog(url, 50));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `Log failed: ${msg}` });
+      setOutput({ type: "error", text: t("action.logFailed", { msg }) });
       setLogEntries(null);
     } finally {
       setLoadingLog(false);
     }
-  }, [svnLog]);
+  }, [svnLog, t]);
 
   // Auto-load log when entering log tab
   useEffect(() => {
@@ -363,149 +261,33 @@ function App() {
     return selected || null;
   }, []);
 
-  // Toolbar actions per active tab
-  const toolbarActions = useMemo((): ToolbarAction[] => {
-    switch (activeTab) {
-      case "log":
-        return [{ id: "refresh", label: "Refresh", icon: RefreshCw, disabled: !selectedUrl || loadingLog }];
-      case "diff":
-        return [{ id: "refresh", label: "Refresh", icon: RefreshCw, disabled: !selectedUrl || loadingDiff }];
-      case "status":
-        return [
-          { id: "checkout", label: "Checkout", icon: ArrowDownToLine, disabled: checkingOut || !activeWorkspace?.baseUrl },
-          { id: "update", label: "Update", icon: Download, disabled: updating || !activeWorkspace?.sourcePath },
-          { id: "add", label: "Add", icon: FilePlus, disabled: adding || !activeWorkspace?.sourcePath },
-          { id: "delete", label: "Delete", icon: Trash2, disabled: deleting || !activeWorkspace?.sourcePath },
-          { id: "revert", label: "Revert", icon: RotateCcw, disabled: reverting || !activeWorkspace?.sourcePath },
-          { id: "cleanup", label: "Cleanup", icon: Wrench, disabled: cleaning || !activeWorkspace?.sourcePath },
-        ];
-      default:
-        return [];
-    }
-  }, [activeTab, selectedUrl, updating, adding, deleting, reverting, cleaning, checkingOut, loadingLog, loadingDiff, activeWorkspace?.sourcePath, activeWorkspace?.baseUrl]);
+  const { dispatch, toolbarActions } = useSvnActions({
+    setOutput,
+    setSelectedUrl, setSelectedName, loadTree, loadLocalTree, localMode, localPath,
+    setDiffContent, loadDiff, loadLog,
+    setActiveTab: setActiveTab as (tab: string) => void,
+    svnCheckout, svnDelete, svnRemoteDelete, svnInfo, svnBlame, svnExport,
+    svnUpdate, svnAdd, svnRevert, svnCleanup,
+    setRenameDialog, setRenameNewName, setRenameMsg,
+    setMkdirParentUrl, setMkdirName, setMkdirMsg,
+    setCopyDialog, setCopyDestUrl, setCopyMsg,
+    setMoveDialog, setMoveDestUrl, setMoveMsg,
+    setConfirmDialog,
+    setCheckingOut, setUpdating, setAdding, setDeleting, setReverting, setCleaning,
+    statusSelectedPaths, setStatusSelectedPaths,
+    activeWorkspace, setWsField: setWsField as (field: string, value: string) => void,
+    pickFile, setOverlay,
+    activeTab, selectedUrl,
+    checkingOut, updating, adding, deleting, reverting, cleaning, loadingLog, loadingDiff,
+  });
 
-  const handleToolbarAction = useCallback(async (action: string) => {
-    switch (action) {
-      case "settings": setOverlay("settings"); break;
-      case "refresh":
-        if (!selectedUrl) return;
-        if (activeTab === "diff") {
-          loadDiff(selectedUrl);
-        } else {
-          loadLog(selectedUrl);
-        }
-        break;
-      case "checkout": {
-        if (!activeWorkspace?.baseUrl?.trim()) {
-          setOutput({ type: "error", text: "请先配置 SVN 地址" });
-          return;
-        }
-        const dest = await open({ multiple: false, directory: true });
-        if (!dest) return;
-        setCheckingOut(true);
-        await tick();
-        try {
-          const result = await svnCheckout(activeWorkspace.baseUrl.trim(), dest);
-          setOutput({ type: "success", text: result });
-          setWsField("sourcePath", dest);
-        } catch (e: unknown) {
-          setOutput({ type: "error", text: `Checkout 失败: ${e instanceof Error ? e.message : String(e)}` });
-        } finally { setCheckingOut(false); }
-        break;
-      }
-      case "update": {
-        if (!activeWorkspace?.sourcePath?.trim()) {
-          setOutput({ type: "error", text: "请先在 Commit 标签页中设置 Source Directory（工作副本路径）" });
-          return;
-        }
-        setUpdating(true);
-        await tick();
-        try {
-          const result = await svnUpdate(activeWorkspace.sourcePath.trim(), "working");
-          setOutput({ type: "success", text: result });
-        } catch (e: unknown) {
-          setOutput({ type: "error", text: `Update 失败: ${e instanceof Error ? e.message : String(e)}` });
-        } finally { setUpdating(false); }
-        break;
-      }
-      case "add": {
-        const targets = statusSelectedPaths.length > 0 ? statusSelectedPaths : await pickFile().then((f) => f ? [f] : []);
-        if (targets.length === 0) return;
-        setAdding(true);
-        await tick();
-        try {
-          const results = await Promise.all(targets.map((f) => svnAdd(f)));
-          setOutput({ type: "success", text: results.join("").trim() || `已添加 ${targets.length} 项` });
-        } catch (e: unknown) {
-          setOutput({ type: "error", text: `Add 失败: ${e instanceof Error ? e.message : String(e)}` });
-        } finally { setAdding(false); setStatusSelectedPaths([]); }
-        break;
-      }
-      case "delete": {
-        const targets = statusSelectedPaths.length > 0 ? statusSelectedPaths : await pickFile().then((f) => f ? [f] : []);
-        if (targets.length === 0) return;
-        setDeleting(true);
-        await tick();
-        try {
-          const results = await Promise.all(targets.map((f) => svnDelete(f)));
-          setOutput({ type: "success", text: results.join("").trim() || `已删除 ${targets.length} 项` });
-        } catch (e: unknown) {
-          setOutput({ type: "error", text: `Delete 失败: ${e instanceof Error ? e.message : String(e)}` });
-        } finally { setDeleting(false); setStatusSelectedPaths([]); }
-        break;
-      }
-      case "revert": {
-        const targets = statusSelectedPaths.length > 0 ? statusSelectedPaths : [];
-        if (targets.length === 0) {
-          setOutput({ type: "error", text: "请先在 Status 列表中选择要还原的文件" });
-          return;
-        }
-        setReverting(true);
-        await tick();
-        try {
-          const results = await Promise.all(targets.map((f) => svnRevert(f)));
-          setOutput({ type: "success", text: results.join("").trim() || `已还原 ${targets.length} 项` });
-        } catch (e: unknown) {
-          setOutput({ type: "error", text: `Revert 失败: ${e instanceof Error ? e.message : String(e)}` });
-        } finally { setReverting(false); setStatusSelectedPaths([]); }
-        break;
-      }
-      case "cleanup": {
-        if (!activeWorkspace?.sourcePath?.trim()) {
-          setOutput({ type: "error", text: "请先设置 Source Directory" });
-          return;
-        }
-        setCleaning(true);
-        await tick();
-        try {
-          const result = await svnCleanup(activeWorkspace.sourcePath.trim());
-          setOutput({ type: "success", text: result || "Cleanup 完成" });
-        } catch (e: unknown) {
-          setOutput({ type: "error", text: `Cleanup 失败: ${e instanceof Error ? e.message : String(e)}` });
-        } finally { setCleaning(false); }
-        break;
-      }
-      default: setOutput({ type: "error", text: `功能 "${action}" 尚未实现` });
-    }
-  }, [selectedUrl, loadLog, loadDiff, activeTab, activeWorkspace?.sourcePath, activeWorkspace?.baseUrl, svnUpdate, svnCheckout, svnAdd, svnDelete, svnRevert, svnCleanup, pickFile, statusSelectedPaths, setWsField, checkingOut]);
+  const handleContextAction = useCallback((action: string, url: string, name: string) => {
+    dispatch({ source: "context", action, url, name });
+  }, [dispatch]);
 
-  // Test connection
-  const handleTestConnection = useCallback(async () => {
-    const ws = workspaces.find((w) => w.id === activeId);
-    if (!ws?.baseUrl.trim()) {
-      setOutput({ type: "error", text: "请先配置 SVN 地址" });
-      return;
-    }
-    setOutput({ type: "success", text: "正在测试连接..." });
-    await tick();
-    try {
-      const result = await testConnection(ws.baseUrl);
-      setOutput({ type: "success", text: result });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setOutput({ type: "error", text: `连接失败: ${msg}` });
-    }
-  }, [activeId, workspaces, testConnection]);
+  const handleToolbarAction = useCallback((action: string) => {
+    dispatch({ source: "toolbar", action });
+  }, [dispatch]);
 
   // Splitter
   const onSplitterDown = useCallback((e: React.MouseEvent) => {
@@ -567,19 +349,19 @@ function App() {
     if (!url) return;
     if (editWsId) {
       setWorkspaces((prev) => prev.map((w) =>
-        w.id === editWsId ? { ...w, name: wsForm.name || "工作空间", baseUrl: url, username: wsForm.username, password: wsForm.password } : w
+        w.id === editWsId ? { ...w, name: wsForm.name || t("workspace.defaultName"), baseUrl: url, username: wsForm.username, password: wsForm.password } : w
       ));
     } else {
       const id = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       setWorkspaces((prev) => [...prev, {
-        id, name: wsForm.name || `工作空间 ${workspaces.length + 1}`, baseUrl: url,
+        id, name: wsForm.name || `${t("workspace.defaultName")} ${workspaces.length + 1}`, baseUrl: url,
         username: wsForm.username, password: wsForm.password,
         sourcePath: "", commitMsg: "update shj-fxc", filterExt: "", sortByDate: false,
       }]);
       setActiveId(id);
     }
     closeOverlay();
-  }, [editWsId, wsForm, workspaces.length, setWorkspaces, setActiveId, closeOverlay]);
+  }, [editWsId, wsForm, workspaces.length, setWorkspaces, setActiveId, closeOverlay, t]);
 
   // Drag-drop listener
   useEffect(() => {
@@ -611,18 +393,10 @@ function App() {
     return () => dragRegionRef.current?.removeEventListener("mousedown", onMouseDown);
   }, []);
 
-  // Listen for SVN progress events from Rust backend
-  useEffect(() => {
-    const unlisten = listen<string>("svn-progress", (event) => {
-      addMessage("info", event.payload);
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, [addMessage]);
-
   return (
     <div className="app">
       <div className="top-bar" ref={dragRegionRef}>
-        <button className="top-bar-settings" onClick={() => setOverlay("settings")} title="设置">
+        <button className="top-bar-settings" onClick={() => setOverlay("settings")} title={t("common.settings")}>
           <Settings size={16} />
         </button>
       </div>
@@ -667,7 +441,7 @@ function App() {
         <div className="panel-right">
           {overlay ? (
             overlay === "settings" ? (
-              <SettingsPanel theme={theme} onThemeChange={setTheme} onClose={closeOverlay} onTestConnection={handleTestConnection} />
+              <SettingsPanel theme={theme} onThemeChange={setTheme} onClose={closeOverlay} />
             ) : (
               <WorkspacePanel
                 editWsId={editWsId}
@@ -721,81 +495,66 @@ function App() {
             </>
           )}
 
-          <TerminalPanel messages={messages} onClear={() => setMessages([])} />
+          <TerminalPanel messages={messages} onClear={onClear} />
         </div>
 
         <div className="splitter" style={{ left: 52 + leftWidth - 3 }} onMouseDown={onSplitterDown} />
       </div>
 
       {confirmDialog && (
-        <div className="modal-overlay" onClick={() => setConfirmDialog(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <p className="modal-message">{confirmDialog.message}</p>
-            <div className="modal-buttons">
-              <button className="btn" onClick={() => setConfirmDialog(null)}>取消</button>
-              <button className="btn btn-primary" onClick={confirmDialog.onConfirm}>确定</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          message={confirmDialog.message}
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={() => setConfirmDialog(null)}
+        />
       )}
 
-      {renameDialog && (
-        <div className="modal-overlay" onClick={() => setRenameDialog(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <p className="modal-message">重命名 <strong>{renameDialog.name}</strong></p>
-            <div className="field" style={{ margin: "12px 0" }}>
-              <label>新名称</label>
-              <input
-                value={renameNewName}
-                onChange={(e) => setRenameNewName(e.target.value)}
-                placeholder="输入新名称"
-                autoFocus
-              />
-            </div>
-            <div className="field" style={{ margin: "12px 0" }}>
-              <label>提交信息（可选）</label>
-              <input
-                value={renameMsg}
-                onChange={(e) => setRenameMsg(e.target.value)}
-                placeholder={`rename ${renameDialog.name} to ...`}
-              />
-            </div>
-            <div className="modal-buttons">
-              <button className="btn" onClick={() => setRenameDialog(null)}>取消</button>
-              <button className="btn btn-primary" onClick={handleRename} disabled={!renameNewName.trim()}>确定</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SvnOperationDialog
+        open={renameDialog !== null}
+        title={<span>{t("dialog.renameTitle", { name: renameDialog?.name ?? "" })}</span>}
+        fields={[
+          { label: t("dialog.renameNewName"), value: renameNewName, placeholder: t("dialog.renameNewNamePlaceholder"), onChange: setRenameNewName, autoFocus: true },
+          { label: t("common.commitOptional"), value: renameMsg, placeholder: t("dialog.renameMsgPlaceholder", { name: renameDialog?.name ?? "", newName: renameNewName || "..." }), onChange: setRenameMsg },
+        ]}
+        confirmDisabled={!renameNewName.trim()}
+        onConfirm={handleRename}
+        onCancel={() => setRenameDialog(null)}
+      />
 
-      {mkdirParentUrl && (
-        <div className="modal-overlay" onClick={() => setMkdirParentUrl(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <p className="modal-message">新建文件夹</p>
-            <div className="field" style={{ margin: "12px 0" }}>
-              <label>文件夹名称</label>
-              <input
-                value={mkdirName}
-                onChange={(e) => setMkdirName(e.target.value)}
-                placeholder="输入文件夹名称"
-                autoFocus
-              />
-            </div>
-            <div className="field" style={{ margin: "12px 0" }}>
-              <label>提交信息（可选）</label>
-              <input
-                value={mkdirMsg}
-                onChange={(e) => setMkdirMsg(e.target.value)}
-                placeholder={`create directory ...`}
-              />
-            </div>
-            <div className="modal-buttons">
-              <button className="btn" onClick={() => setMkdirParentUrl(null)}>取消</button>
-              <button className="btn btn-primary" onClick={handleMkdir} disabled={!mkdirName.trim()}>确定</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SvnOperationDialog
+        open={mkdirParentUrl !== null}
+        title={t("dialog.mkdirTitle")}
+        fields={[
+          { label: t("dialog.mkdirName"), value: mkdirName, placeholder: t("dialog.mkdirNamePlaceholder"), onChange: setMkdirName, autoFocus: true },
+          { label: t("common.commitOptional"), value: mkdirMsg, placeholder: t("dialog.mkdirMsgPlaceholder"), onChange: setMkdirMsg },
+        ]}
+        confirmDisabled={!mkdirName.trim()}
+        onConfirm={handleMkdir}
+        onCancel={() => setMkdirParentUrl(null)}
+      />
+      <SvnOperationDialog
+        open={copyDialog !== null}
+        title={<span>{t("dialog.copyTitle", { name: copyDialog?.name ?? "" })}</span>}
+        fields={[
+          { label: t("dialog.copyDestUrl"), value: copyDestUrl, placeholder: t("dialog.copyDestUrlPlaceholder"), onChange: setCopyDestUrl, autoFocus: true },
+          { label: t("common.commitOptional"), value: copyMsg, placeholder: t("dialog.copyMsgPlaceholder", { name: copyDialog?.name ?? "" }), onChange: setCopyMsg },
+        ]}
+        confirmDisabled={!copyDestUrl.trim()}
+        onConfirm={handleCopy}
+        onCancel={() => setCopyDialog(null)}
+      />
+
+      <SvnOperationDialog
+        open={moveDialog !== null}
+        title={<span>{t("dialog.moveTitle", { name: moveDialog?.name ?? "" })}</span>}
+        fields={[
+          { label: t("dialog.moveDestUrl"), value: moveDestUrl, placeholder: t("dialog.moveDestUrlPlaceholder"), onChange: setMoveDestUrl, autoFocus: true },
+          { label: t("common.commitOptional"), value: moveMsg, placeholder: t("dialog.moveMsgPlaceholder", { name: moveDialog?.name ?? "" }), onChange: setMoveMsg },
+        ]}
+        confirmDisabled={!moveDestUrl.trim()}
+        onConfirm={handleMove}
+        onCancel={() => setMoveDialog(null)}
+      />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState, useMemo, useCallback } from "react";
 import { Folder, RefreshCw } from "lucide-react";
 import type { SvnStatusEntry } from "../../types";
@@ -42,6 +43,7 @@ export function StatusPanel({
   selectedPaths: string[];
   onSelectionChange: (paths: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const [wcPath, setWcPath] = useState(defaultPath || "");
   const [entries, setEntries] = useState<SvnStatusEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,15 +65,15 @@ export function StatusPanel({
     try {
       const result = await svnStatus(wcPath.trim());
       setEntries(result);
-      onOutput("success", result.length === 0 ? "工作副本干净，无变更" : `找到 ${result.length} 个变更`);
+      onOutput("success", result.length === 0 ? t("status.empty") : t("status.selectedCount", { count: result.length }));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      onOutput("error", `Status 失败: ${msg}`);
+      onOutput("error", t("status.statusFailed", { msg }));
       setEntries(null);
     } finally {
       setLoading(false);
     }
-  }, [wcPath, svnStatus, onOutput, onSelectionChange]);
+  }, [wcPath, svnStatus, onOutput, onSelectionChange, t]);
 
   const handleBrowse = useCallback(async () => {
     const p = await onPickDirectory();
@@ -101,15 +103,15 @@ export function StatusPanel({
   return (
     <div className="main">
       <div className="field">
-        <label>Working Copy</label>
+        <label>{t("status.wcPath")}</label>
         <div className="file-input-row">
           <input
             value={wcPath}
             onChange={(e) => setWcPath(e.target.value)}
-            placeholder="选择 SVN 工作副本目录"
+            placeholder={t("status.wcPlaceholder")}
           />
           <button className="btn" onClick={handleBrowse}>
-            <Folder size={14} /> Browse
+            <Folder size={14} /> {t("common.browse")}
           </button>
         </div>
       </div>
@@ -117,7 +119,7 @@ export function StatusPanel({
       <div className="status-actions">
         <button className="btn btn-primary" onClick={checkStatus} disabled={loading || !wcPath.trim()}>
           {loading ? <span className="spinner" /> : <RefreshCw size={14} />}
-          {loading ? "检查中..." : "Check Status"}
+          {loading ? t("status.checking") : t("status.checkStatus")}
         </button>
       </div>
 
@@ -133,12 +135,12 @@ export function StatusPanel({
 
       {selectedPaths.length > 0 && (
         <div className="status-selection-info">
-          已选 {selectedPaths.length} 项
+          {t("status.selectedCount", { count: selectedPaths.length })}
         </div>
       )}
 
       {entries && entries.length === 0 && (
-        <div className="tree-empty">✓ 工作副本干净，无变更</div>
+        <div className="tree-empty">✓ {t("status.clean")}</div>
       )}
 
       {entries && entries.length > 0 && (

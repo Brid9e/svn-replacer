@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import i18n from "../i18n";
 import type { Workspace } from "../types";
 
 const DEFAULT_COMMIT_MSG = "update shj-fxc";
@@ -21,7 +22,7 @@ function migrateLegacy(): Workspace[] {
   } catch { /* ignore */ }
   return [{
     id: "default",
-    name: "默认工作空间",
+    name: i18n.t("workspace.defaultName"),
     baseUrl: (() => { try { return decodeURI(oldUrl); } catch { return oldUrl; } })(),
     username: oldUsername,
     password: oldPassword,

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Folder, ArrowUpToLine } from "lucide-react";
 
@@ -12,6 +13,7 @@ export function ReplacePanel({
   onReplace: (source: string, targetUrl: string, commitMsg: string) => void;
   onPickSource: () => Promise<string | null>;
 }) {
+  const { t } = useTranslation();
   const [sourcePath, setSourcePath] = useState("");
   const [commitMsg, setCommitMsg] = useState("");
 
@@ -25,30 +27,30 @@ export function ReplacePanel({
   return (
     <div className="main">
       <div className="field">
-        <label>Source（本地文件或目录）</label>
+        <label>{t("replace.pickSource")}</label>
         <div className="file-input-row">
           <input
             value={sourcePath}
             onChange={(e) => setSourcePath(e.target.value)}
-            placeholder="选择或输入本地路径"
+            placeholder={t("replace.sourcePlaceholder")}
           />
           <button className="btn" onClick={handlePickSource}>
-            <Folder size={14} /> Browse
+            <Folder size={14} /> {t("common.browse")}
           </button>
         </div>
       </div>
 
       <div className="field">
-        <label>Target URL</label>
-        <div className={`target-display${!targetUrl ? " target-placeholder" : ""}`}>{targetUrl || "请在左侧树中选择目标"}</div>
+        <label>{t("replace.targetUrl")}</label>
+        <div className={`target-display${!targetUrl ? " target-placeholder" : ""}`}>{targetUrl || t("replace.noSelection")}</div>
       </div>
 
       <div className="field">
-        <label>Commit Message</label>
+        <label>{t("replace.commitMsg")}</label>
         <input
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
-          placeholder="输入提交信息"
+          placeholder={t("replace.msgPlaceholder")}
         />
       </div>
 
@@ -57,7 +59,7 @@ export function ReplacePanel({
         onClick={() => onReplace(sourcePath, targetUrl, commitMsg)}
         disabled={replacing || !sourcePath.trim() || !targetUrl.trim() || !commitMsg.trim()}
       >
-        {replacing ? <span className="spinner" /> : <><ArrowUpToLine size={14} /> Replace & Commit</>}
+        {replacing ? <><span className="spinner" /> {t("replace.replacing")}</> : <><ArrowUpToLine size={14} /> {t("replace.replace")}</>}
       </button>
     </div>
   );

@@ -1,4 +1,4 @@
-# SVN Replacer
+# SvnGo
 
 一个基于 Tauri 的图形化 SVN 客户端，支持远程仓库浏览、文件替换、提交管理等操作。
 

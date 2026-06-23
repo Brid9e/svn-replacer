@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Search, ArrowUpDown, Filter, RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Search, ArrowUpDown, Filter, RefreshCw, FolderPlus, Link, Copy, Pencil, History, ArrowDownToLine, Trash2, MoveRight, Download, Code2, Info, FileText } from "lucide-react";
 import type { TreeNode, Workspace, SvnEntry } from "../types";
 import { TreeItem } from "./TreeItem";
 
@@ -53,6 +54,7 @@ export function TreePanel({
   onRefreshTree?: () => void;
   localPath?: string;
 }) {
+  const { t } = useTranslation();
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; url: string; name: string; kind: string } | null>(null);
   const ctxRef = useRef<HTMLDivElement>(null);
 
@@ -74,26 +76,26 @@ export function TreePanel({
       <div className="tree-toolbar">
         {!treeRoot && (
           <button className="btn" onClick={onLoadTree} disabled={treeLoading || !workspace?.baseUrl} style={{ flex: 1 }}>
-            {treeLoading ? <span className="spinner" /> : "Load Tree"}
+            {treeLoading ? <span className="spinner" /> : t("tree.loadTree")}
           </button>
         )}
         {treeRoot && (
-          <button className="btn btn-icon" onClick={onSortToggle} title={workspace?.sortByDate ? "按名称排序" : "按日期排序"}>
+          <button className="btn btn-icon" onClick={onSortToggle} title={workspace?.sortByDate ? t("workspace.sortByName") : t("workspace.sortByDate")}>
             <ArrowUpDown size={14} className={workspace?.sortByDate ? "text-primary" : ""} />
           </button>
         )}
         {treeRoot && (
-          <button className="btn btn-small" onClick={onToggleTreeMode} title={localMode ? "切换到远程" : "浏览本地目录"}>
-            {localMode ? "远程" : "本地"}
+          <button className="btn btn-small" onClick={onToggleTreeMode} title={localMode ? t("workspace.switchRemote") : t("workspace.switchLocal")}>
+            {localMode ? t("workspace.remote") : t("workspace.local")}
           </button>
         )}
         {treeRoot && (
-          <button className="btn btn-icon" onClick={() => onFilterOpenChange(!filterOpen)} title="筛选">
+          <button className="btn btn-icon" onClick={() => onFilterOpenChange(!filterOpen)} title={t("common.filter")}>
             <Filter size={14} className={filterOpen ? "text-primary" : ""} />
           </button>
         )}
         {treeRoot && (
-          <button className="btn btn-icon" onClick={onRefreshTree} disabled={treeLoading} title="刷新">
+          <button className="btn btn-icon" onClick={onRefreshTree} disabled={treeLoading} title={t("common.refresh")}>
             <RefreshCw size={14} className={treeLoading ? "spin" : ""} />
           </button>
         )}
@@ -103,7 +105,7 @@ export function TreePanel({
         <input
           value={searchText}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="搜索..."
+          placeholder={t("common.search")}
         />
       </div>
       {filterOpen && (
@@ -111,13 +113,13 @@ export function TreePanel({
           <input
             value={workspace?.filterExt || ""}
             onChange={(e) => onFilterExtChange(e.target.value)}
-            placeholder="扩展名, 逗号隔开, 如: .jar,.class"
+            placeholder={t("workspace.filterExt")}
           />
         </div>
       )}
       <div className="tree-container">
         {!workspace?.baseUrl && !localMode ? (
-          <div className="tree-empty">请在设置中配置 SVN 地址</div>
+          <div className="tree-empty">{t("tree.noUrl")}</div>
         ) : treeRoot ? (
           <TreeItem
             node={treeRoot}
@@ -134,9 +136,9 @@ export function TreePanel({
             baseUrl={localMode && localPath ? localPath : workspace?.baseUrl}
           />
         ) : localMode ? (
-          <div className="tree-empty">点击"远程"加载目录</div>
+          <div className="tree-empty">{t("tree.loadFirst")}</div>
         ) : (
-          <div className="tree-empty">点击 Load Tree</div>
+          <div className="tree-empty">{t("tree.clickLoad")}</div>
         )}
       </div>
 
@@ -144,28 +146,51 @@ export function TreePanel({
         <div ref={ctxRef} className="ctx-menu" style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999 }}>
           {ctxMenu.kind === "dir" && (
             <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("mkdir", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
-              新建文件夹
+              <FolderPlus size={14} /> {t("common.createDir")}
             </div>
           )}
           <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("copy-url", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
-            复制 URL
+            <Link size={14} /> {t("common.copyUrl")}
+          </div>
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("copy-name", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            <Copy size={14} /> {t("common.copyName")}
           </div>
           <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("rename", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
-            重命名
+            <Pencil size={14} /> {t("common.rename")}
           </div>
           <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("view-log", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
-            查看提交历史
+            <History size={14} /> {t("common.viewLog")}
+          </div>
+          <div className="ctx-divider" />
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("checkout", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            <ArrowDownToLine size={14} /> {t("common.checkout")}
           </div>
           <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("delete", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
-            删除
+            <Trash2 size={14} /> {t("common.delete")}
+          </div>
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("copy-to", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            <Copy size={14} /> {t("common.copyTo")}
+          </div>
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("move-to", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            <MoveRight size={14} /> {t("common.moveTo")}
+          </div>
+          <div className="ctx-divider" />
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("export", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            <Download size={14} /> {t("common.export")}
+          </div>
+          <div className="ctx-divider" />
+          {ctxMenu.kind !== "dir" && (
+            <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("diff", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+              <Code2 size={14} /> {t("common.diff")}
+            </div>
+          )}
+          <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("info", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+            <Info size={14} /> {t("common.info")}
           </div>
           {ctxMenu.kind !== "dir" && (
-            <>
-              <div className="ctx-divider" />
-              <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("diff", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
-                Diff
-              </div>
-            </>
+            <div className="ctx-menu-item" onMouseDown={() => { onContextAction?.("blame", ctxMenu.url, ctxMenu.name); setCtxMenu(null); }}>
+              <FileText size={14} /> {t("common.blame")}
+            </div>
           )}
         </div>,
         document.body
