@@ -1,11 +1,12 @@
 <h1 align="center">SvnGo</h1>
 
 <p align="center">
-  <b>简洁高效的 SVN 图形化客户端</b>
+  <b>轻量 SVN 图形化客户端 · 安装包仅 3.5MB</b>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS-blue" alt="Platform">
+  <img src="https://img.shields.io/badge/size-3.5MB-brightgreen" alt="Size">
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19">
   <img src="https://img.shields.io/badge/Tauri-v2-FFC131" alt="Tauri v2">
   <img src="https://img.shields.io/github/v/release/Brid9e/svn-go" alt="Latest Release">
@@ -49,7 +50,7 @@
 
 > **注意**: SvnGo 当前仅支持 **macOS**（ARM64）。
 
-从 [Releases](https://github.com/Brid9e/svn-go/releases) 下载最新版本的 `.dmg` 安装包，打开即可使用。
+从 [Releases](https://github.com/Brid9e/svn-go/releases) 下载 `.dmg` 安装包（仅 **3.5MB**），打开即可使用。
 
 **依赖**: 系统需安装 SVN 命令行客户端（`svn` 需在 `PATH` 中）。
 
