@@ -1,30 +1,66 @@
-# SvnGo
+<h1 align="center">SvnGo</h1>
 
-一个基于 Tauri 的图形化 SVN 客户端，支持远程仓库浏览、文件替换、提交管理等操作。
+<p align="center">
+  <b>简洁高效的 SVN 图形化客户端</b>
+</p>
 
-## 功能
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-macOS-blue" alt="Platform">
+  <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19">
+  <img src="https://img.shields.io/badge/Tauri-v2-FFC131" alt="Tauri v2">
+  <img src="https://img.shields.io/github/v/release/Brid9e/svn-go" alt="Latest Release">
+</p>
 
-- **远程仓库浏览** — 以树形结构浏览 SVN 仓库目录，支持按日期排序、按扩展名筛选
-- **本地目录浏览** — 浏览本地文件系统，实时显示 SVN 状态徽标（M/A/D/?/C/!）
-- **替换与提交** — 选择本地文件/目录，直接上传替换远程 SVN 上的对应内容
-- **文件重命名** — 右键远程文件/目录进行重命名
-- **新建目录** — 右键远程目录快速创建子目录
-- **提交管理** — 工作副本更新、添加、删除、还原、清理
-- **提交历史** — 查看指定文件/目录的 SVN log 时间线
-- **文件差异** — 查看文件最新版本的 Diff
+---
 
-## 预览
+## ✨ 功能一览
 
-![example](public/example.png)
+| 功能 | 说明 |
+|------|------|
+| 远程仓库浏览 | 树形结构浏览 SVN 目录，支持按日期排序、按扩展名筛选 |
+| 本地目录浏览 | 浏览本地文件系统，实时显示 SVN 状态（M/A/D/?/C/!） |
+| 文件替换提交 | 选择本地文件/目录，直接上传替换远程 SVN 内容 |
+| 文件重命名 | 右键远程文件/目录进行重命名 |
+| 新建目录 | 右键远程目录快速创建子目录 |
+| 提交管理 | 工作副本更新、添加、删除、还原、清理 |
+| 提交历史 | 查看文件/目录的 SVN log 时间线 |
+| 文件差异 | 查看文件最新版本的 Diff |
 
-## 技术栈
+---
 
-- **前端**: React 19 + TypeScript + Vite
-- **桌面框架**: Tauri v2
-- **后端**: Rust（通过 Tauri commands 调用 SVN CLI）
-- **SVN**: 系统 SVN 命令行客户端
+## 🖥 预览
 
-## 开发
+![SvnGo 截图](public/example.png)
+
+---
+
+## 🛠 技术栈
+
+| 层面 | 技术 |
+|------|------|
+| 前端 | React 19 + TypeScript + Vite |
+| 桌面框架 | Tauri v2 |
+| 后端 | Rust（通过 Tauri command 调用 SVN CLI） |
+| 版本控制 | 系统 SVN 命令行客户端 |
+
+---
+
+## 📦 安装
+
+> **注意**: SvnGo 当前仅支持 **macOS**（ARM64）。
+
+从 [Releases](https://github.com/Brid9e/svn-go/releases) 下载最新版本的 `.dmg` 安装包，打开即可使用。
+
+**依赖**: 系统需安装 SVN 命令行客户端（`svn` 需在 `PATH` 中）。
+
+```bash
+# 检查是否已安装
+svn --version
+```
+
+---
+
+## 🔧 开发
 
 ```bash
 # 安装依赖
@@ -37,9 +73,15 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-## 环境要求
+### 环境要求
 
 - Node.js 20+
 - pnpm
 - Rust toolchain
-- SVN 命令行客户端（`svn` 在 PATH 中）
+- SVN 命令行客户端（`svn` 在 `PATH` 中）
+
+---
+
+<p align="center">
+  Made with ❤️
+</p>
